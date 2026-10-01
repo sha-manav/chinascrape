@@ -1,0 +1,57 @@
+name: CLS Telegraph watch
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: cls-watch
+  cancel-in-progress: false
+
+jobs:
+  watch:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # The last-seen position lives in the Actions cache between runs.
+      - name: Restore state
+        uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: cls-state-${{ github.run_id }}
+          restore-keys: cls-state-
+
+      - name: Check feed
+        id: watch
+        run: python3 watch_cls.py
+
+      - name: Save state
+        uses: actions/cache/save@v4
+        with:
+          path: state
+          key: cls-state-${{ github.run_id }}
+
+      # Assigning the issue to the repo owner makes GitHub email them.
+      - name: Open issue
+        if: steps.watch.outputs.has_matches == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          gh label create cls-alert --color 1d76db --description "CLS Telegraph watch" 2>/dev/null || true
+          gh issue create \
+            --title "$(cat issue_title.txt)" \
+            --body-file issue_body.md \
+            --label cls-alert \
+            --assignee "$OWNER"
