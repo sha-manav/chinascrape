@@ -195,25 +195,28 @@ def backfill(date_from, date_to, dry_run):
     return write_issues(groups)
 
 
+def github_api(path, data):
+    api = os.environ.get("GITHUB_API_URL", "https://api.github.com")
+    req = urllib.request.Request(f"{api}/repos/{os.environ['GITHUB_REPOSITORY']}/{path}", json.dumps(data).encode(), {
+        "Authorization": f"Bearer {os.environ['GITHUB_TOKEN']}", "Accept": "application/vnd.github+json"})
+    body = urllib.request.urlopen(req, timeout=30).read()
+    return json.loads(body) if body else {}
+
+
 def publish():
     """Open a GitHub issue for each issue_NNN.md written by this run (skipped outside Actions)."""
     files = sorted(Path().glob("issue_*.md"))
     token, repo = os.environ.get("GITHUB_TOKEN"), os.environ.get("GITHUB_REPOSITORY")
     if not files or not (token and repo):
         return
-    def call(path, data):
-        api = os.environ.get("GITHUB_API_URL", "https://api.github.com")
-        req = urllib.request.Request(f"{api}/repos/{repo}/{path}", json.dumps(data).encode(), {
-            "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"})
-        return json.load(urllib.request.urlopen(req, timeout=30))
     try:
-        call("labels", {"name": "cls-alert", "color": "1d76db", "description": "CLS Telegraph watch"})
+        github_api("labels", {"name": "cls-alert", "color": "1d76db", "description": "CLS Telegraph watch"})
     except urllib.error.HTTPError:
         pass  # already exists
     owner = repo.split("/")[0]
     for f in files:
         title = f.with_suffix(".title").read_text(encoding="utf-8")
-        issue = call("issues", {"title": title, "body": f.read_text(encoding="utf-8"),
+        issue = github_api("issues", {"title": title, "body": f.read_text(encoding="utf-8"),
                                 "labels": ["cls-alert"], "assignees": [owner]})
         print("opened", issue["html_url"])
         f.unlink()
@@ -236,8 +239,24 @@ def loop(minutes):
         if wake > deadline:
             break
         time.sleep(max(0, wake - time.time()))
+    restart()
     if failed:
         sys.exit("at least one check failed; see the log above")
+
+
+def restart():
+    """Queue the next watcher run (GitHub lets a workflow dispatch itself with its own token)."""
+    if not os.environ.get("GITHUB_TOKEN"):
+        return
+    for attempt in range(3):
+        try:
+            github_api("actions/workflows/cls-watch.yml/dispatches",
+                       {"ref": os.environ.get("GITHUB_REF_NAME", "main"), "inputs": {"watch_loop": "true"}})
+            print("queued the next watcher run")
+            return
+        except Exception as e:
+            print(f"could not queue the next watcher run ({e!r}); the hourly schedule is the backup", file=sys.stderr)
+            time.sleep(10)
 
 
 def main():

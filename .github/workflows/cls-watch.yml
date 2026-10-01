@@ -1,12 +1,16 @@
 name: CLS Telegraph watch
 
 on:
-  # GitHub often drops scheduled runs, so a scheduled run stays alive for ~5h40m and checks
-  # every 30 minutes itself; the hourly schedule only needs to fire now and then to restart it.
+  # GitHub often drops scheduled runs, so the watcher stays alive for ~5h40m, checks every
+  # 30 minutes itself, then starts its own next run (watch_loop). The schedule is only a backup.
   schedule:
     - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
+      watch_loop:
+        description: "Start the 30-minute watcher (it keeps restarting itself)"
+        type: boolean
+        default: false
       lookback_hours:
         description: "Test: report all matching posts from the last N hours, even if already sent (blank = normal run)"
         required: false
@@ -27,10 +31,11 @@ on:
 permissions:
   contents: read
   issues: write
+  actions: write
 
-# One scheduled watcher at a time (extra triggers wait their turn); manual runs never queue behind it.
+# One watcher at a time (extra triggers wait their turn); other manual runs never queue behind it.
 concurrency:
-  group: ${{ github.event_name == 'schedule' && 'cls-watch' || format('cls-manual-{0}', github.run_id) }}
+  group: ${{ (github.event_name == 'schedule' || inputs.watch_loop) && 'cls-watch' || format('cls-manual-{0}', github.run_id) }}
   cancel-in-progress: false
 
 jobs:
@@ -59,7 +64,7 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
-          LOOP_MINUTES: ${{ github.event_name == 'schedule' && '340' || '' }}
+          LOOP_MINUTES: ${{ (github.event_name == 'schedule' || inputs.watch_loop) && '340' || '' }}
           LOOKBACK_HOURS: ${{ inputs.lookback_hours }}
           FROM_DATE: ${{ inputs.from_date }}
           TO_DATE: ${{ inputs.to_date }}
