@@ -6,7 +6,7 @@
 
 - Edit `KEYWORDS` in `watch_cls.py` to change what counts as a match.
 - The last-seen position is kept in the Actions cache; if it is lost, the next run looks back 60 minutes.
-- Run it by hand from the Actions tab ("CLS Telegraph watch" → Run workflow).
+- Run it by hand from the Actions tab ("CLS Telegraph watch" → Run workflow). To test the email, enter a number in "lookback_hours" (e.g. 24) to report every matching post from that many hours back, even ones already sent.
 - GitHub may start scheduled runs a few minutes late, and disables schedules after 60 days without repo activity.
 
 ## Manual tools

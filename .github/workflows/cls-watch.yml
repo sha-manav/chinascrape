@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "*/30 * * * *"
   workflow_dispatch:
+    inputs:
+      lookback_hours:
+        description: "Test: report all matching posts from the last N hours, even if already sent (blank = normal run)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -29,18 +34,20 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: state
-          key: cls-state-${{ github.run_id }}
+          key: cls-state-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: cls-state-
 
       - name: Check feed
         id: watch
+        env:
+          LOOKBACK_HOURS: ${{ inputs.lookback_hours }}
         run: python3 watch_cls.py
 
       - name: Save state
         uses: actions/cache/save@v4
         with:
           path: state
-          key: cls-state-${{ github.run_id }}
+          key: cls-state-${{ github.run_id }}-${{ github.run_attempt }}
 
       # Assigning the issue to the repo owner makes GitHub email them.
       - name: Open issue

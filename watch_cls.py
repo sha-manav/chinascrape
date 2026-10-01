@@ -113,6 +113,9 @@ def main():
         state = {}
     seen = {int(k): v for k, v in state.get("seen", {}).items()}
     since = state["last_ctime"] - OVERLAP if "last_ctime" in state else now - FIRST_RUN_LOOKBACK
+    if force := float(os.environ.get("LOOKBACK_HOURS") or 0):
+        # manual test run: report everything in the last N hours, even if already reported
+        since, seen = now - int(force * 3600), {}
 
     posts = fetch_since(since)
     new = sorted((p for p in posts if p["id"] not in seen), key=lambda p: p["ctime"])
