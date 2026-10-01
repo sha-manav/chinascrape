@@ -154,7 +154,8 @@ def summary_title(results, by_id, label=None):
     times = sorted(by_id[r["id"]]["ctime"] for r in results)
     lo, hi = fmt_time(times[0]), fmt_time(times[-1])
     n_high = sum(r["importance"] == "High" for r in results)
-    when = label or f"{lo[5:]} – {hi[11:] if lo[:10] == hi[:10] else hi[5:]} Beijing"
+    span = lo[5:] if lo == hi else f"{lo[5:]} – {hi[11:] if lo[:10] == hi[:10] else hi[5:]}"
+    when = label or f"{span} Beijing"
     return (f"CLS: {len(results)} AI/semis/supply-chain update{'s' if len(results) != 1 else ''}"
             + (f", {n_high} high" if n_high else "") + f" ({when})")
 
