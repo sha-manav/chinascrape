@@ -5,7 +5,7 @@ Run every 30 minutes by .github/workflows/cls-watch.yml. Writes issue_title.txt 
 issue_body_N.md when there are relevant posts, and keeps its place in STATE_FILE.
 The relevance rules and translation instructions are in filter_prompt.md.
 """
-import json, os, re, sys, time, urllib.request
+import json, os, re, sys, time, urllib.error, urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -19,6 +19,7 @@ FIRST_RUN_LOOKBACK = int(os.environ.get("FIRST_RUN_LOOKBACK_MIN", "60")) * 60
 OVERLAP = 15 * 60          # re-read this much before the last run, in case posts land late
 SEEN_TTL = 2 * 24 * 3600   # how long to remember ids already handled
 MAX_PAGES = 30
+INTERVAL = 30 * 60        # seconds between checks in loop mode
 BATCH = 60                 # posts per Claude request
 BODY_LIMIT = 60000         # GitHub issue bodies max out at 65536 characters
 
@@ -194,14 +195,61 @@ def backfill(date_from, date_to, dry_run):
     return write_issues(groups)
 
 
+def publish():
+    """Open a GitHub issue for each issue_NNN.md written by this run (skipped outside Actions)."""
+    files = sorted(Path().glob("issue_*.md"))
+    token, repo = os.environ.get("GITHUB_TOKEN"), os.environ.get("GITHUB_REPOSITORY")
+    if not files or not (token and repo):
+        return
+    def call(path, data):
+        api = os.environ.get("GITHUB_API_URL", "https://api.github.com")
+        req = urllib.request.Request(f"{api}/repos/{repo}/{path}", json.dumps(data).encode(), {
+            "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json"})
+        return json.load(urllib.request.urlopen(req, timeout=30))
+    try:
+        call("labels", {"name": "cls-alert", "color": "1d76db", "description": "CLS Telegraph watch"})
+    except urllib.error.HTTPError:
+        pass  # already exists
+    owner = repo.split("/")[0]
+    for f in files:
+        title = f.with_suffix(".title").read_text(encoding="utf-8")
+        issue = call("issues", {"title": title, "body": f.read_text(encoding="utf-8"),
+                                "labels": ["cls-alert"], "assignees": [owner]})
+        print("opened", issue["html_url"])
+        f.unlink()
+        f.with_suffix(".title").unlink()
+
+
+def loop(minutes):
+    """Check every INTERVAL seconds until the time budget runs out. GitHub's scheduler drops many
+    runs, so one long job does the 30-minute checks itself and the hourly schedule just restarts it."""
+    deadline, failed = time.time() + minutes * 60, False
+    while True:
+        started = time.time()
+        try:
+            watch()
+            publish()
+        except Exception as e:  # keep looping; the posts are retried next check
+            failed = True
+            print(f"check failed: {e!r}", file=sys.stderr)
+        wake = started + INTERVAL
+        if wake > deadline:
+            break
+        time.sleep(max(0, wake - time.time()))
+    if failed:
+        sys.exit("at least one check failed; see the log above")
+
+
 def main():
     if os.environ.get("FROM_DATE"):
-        n = backfill(os.environ["FROM_DATE"], os.environ.get("TO_DATE") or os.environ["FROM_DATE"],
-                     os.environ.get("DRY_RUN", "").lower() == "true")
+        backfill(os.environ["FROM_DATE"], os.environ.get("TO_DATE") or os.environ["FROM_DATE"],
+                 os.environ.get("DRY_RUN", "").lower() == "true")
+        publish()
+    elif minutes := float(os.environ.get("LOOP_MINUTES") or 0):
+        loop(minutes)
     else:
-        n = watch()
-    if gh_out := os.environ.get("GITHUB_OUTPUT"):
-        open(gh_out, "a").write(f"has_matches={'true' if n else 'false'}\n")
+        watch()
+        publish()
 
 
 def watch():

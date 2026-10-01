@@ -1,8 +1,10 @@
 name: CLS Telegraph watch
 
 on:
+  # GitHub often drops scheduled runs, so a scheduled run stays alive for ~5h40m and checks
+  # every 30 minutes itself; the hourly schedule only needs to fire now and then to restart it.
   schedule:
-    - cron: "*/30 * * * *"
+    - cron: "17 * * * *"
   workflow_dispatch:
     inputs:
       lookback_hours:
@@ -26,14 +28,15 @@ permissions:
   contents: read
   issues: write
 
+# One scheduled watcher at a time (extra triggers wait their turn); manual runs never queue behind it.
 concurrency:
-  group: cls-watch
+  group: ${{ github.event_name == 'schedule' && 'cls-watch' || format('cls-manual-{0}', github.run_id) }}
   cancel-in-progress: false
 
 jobs:
   watch:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 355
     steps:
       - uses: actions/checkout@v4
 
@@ -55,6 +58,8 @@ jobs:
         id: watch
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          GITHUB_TOKEN: ${{ github.token }}
+          LOOP_MINUTES: ${{ github.event_name == 'schedule' && '340' || '' }}
           LOOKBACK_HOURS: ${{ inputs.lookback_hours }}
           FROM_DATE: ${{ inputs.from_date }}
           TO_DATE: ${{ inputs.to_date }}
@@ -62,19 +67,8 @@ jobs:
         run: python3 watch_cls.py
 
       - name: Save state
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: state
           key: cls-state-${{ github.run_id }}-${{ github.run_attempt }}
-
-      # Assigning the issue to the repo owner makes GitHub email them.
-      - name: Open issue
-        if: steps.watch.outputs.has_matches == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          OWNER: ${{ github.repository_owner }}
-        run: |
-          gh label create cls-alert --color 1d76db --description "CLS Telegraph watch" 2>/dev/null || true
-          for f in $(ls issue_*.md | sort); do
-            gh issue create --title "$(cat "${f%.md}.title")" --body-file "$f" --label cls-alert --assignee "$OWNER"
-          done
