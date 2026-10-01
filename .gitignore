@@ -4,6 +4,6 @@ sent_alerts.md
 *report*.md
 slices/
 scan*/
-issue_title.txt
-issue_body_*.md
+issue_*.title
+issue_*.md
 state/

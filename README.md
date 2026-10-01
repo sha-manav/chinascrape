@@ -8,6 +8,7 @@
 - **What counts as relevant** is written in plain English in `filter_prompt.md`; edit it to widen or narrow the filter.
 - The last-seen position is kept in the Actions cache. If it is lost, the next run looks back 60 minutes. If Claude or CLS fails, the run fails (GitHub emails you) and the same posts are retried next run.
 - Run it by hand from the Actions tab ("CLS Telegraph watch" → Run workflow). To test, enter a number in "lookback_hours" (e.g. 24) to process every post from that many hours back, even ones already sent. Very long digests are split into several issues.
+- **Past dates:** fill in `from_date` / `to_date` (Beijing dates, YYYY-MM-DD) when running by hand to process a past range, with one issue per day. Tick `dry_run` first to see, at no cost, how far back the CLS feed actually reaches. Backfills don't affect the 30-minute watch.
 - GitHub may start scheduled runs a few minutes late, and disables schedules after 60 days without repo activity.
 
 ## Manual tools

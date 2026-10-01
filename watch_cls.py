@@ -6,6 +6,7 @@ issue_body_N.md when there are relevant posts, and keeps its place in STATE_FILE
 The relevance rules and translation instructions are in filter_prompt.md.
 """
 import json, os, re, sys, time, urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import anthropic
@@ -63,10 +64,11 @@ def fetch_page(cursor, rn=50):
             time.sleep(5 * (attempt + 1))
 
 
-def fetch_since(since):
-    """All posts with ctime >= since, paging backwards from now."""
-    posts, cursor = {}, int(time.time())
-    for _ in range(MAX_PAGES):
+def fetch_since(since, until=None, max_pages=MAX_PAGES):
+    """All posts with since <= ctime < until (default: now), paging backwards from until."""
+    until = until or int(time.time()) + 1
+    posts, cursor = {}, until
+    for _ in range(max_pages):
         rows = fetch_page(cursor)
         for r in rows:
             posts[r["id"]] = r
@@ -75,7 +77,7 @@ def fetch_since(since):
             break
         cursor = oldest
         time.sleep(1)
-    return [p for p in posts.values() if p["ctime"] >= since]
+    return [p for p in posts.values() if since <= p["ctime"] < until]
 
 
 def fmt_time(ct):
@@ -127,7 +129,82 @@ def render(results, posts):
     return bodies + [cur] if cur else bodies
 
 
+def day_start(date):
+    """Unix time of 00:00 Beijing on a YYYY-MM-DD date."""
+    return int(datetime.strptime(date, "%Y-%m-%d").replace(tzinfo=BJ).timestamp())
+
+
+def write_issues(groups):
+    """groups: [(title, results, posts_by_id)]. Writes issue_NNN.title / issue_NNN.md pairs."""
+    for f in [*Path().glob("issue_*.md"), *Path().glob("issue_*.title")]:
+        f.unlink()
+    n = 0
+    for title, results, by_id in groups:
+        bodies = render(results, by_id)
+        for i, body in enumerate(bodies, 1):
+            n += 1
+            part = f" [part {i}/{len(bodies)}]" if len(bodies) > 1 else ""
+            open(f"issue_{n:03d}.title", "w", encoding="utf-8").write(title + part)
+            open(f"issue_{n:03d}.md", "w", encoding="utf-8").write(body)
+    return n
+
+
+def summary_title(results, by_id, label=None):
+    times = sorted(by_id[r["id"]]["ctime"] for r in results)
+    lo, hi = fmt_time(times[0]), fmt_time(times[-1])
+    n_high = sum(r["importance"] == "High" for r in results)
+    when = label or f"{lo[5:]} – {hi[11:] if lo[:10] == hi[:10] else hi[5:]} Beijing"
+    return (f"CLS: {len(results)} AI/semis/supply-chain update{'s' if len(results) != 1 else ''}"
+            + (f", {n_high} high" if n_high else "") + f" ({when})")
+
+
+def screen_all(posts):
+    if not posts:
+        return []
+    client = anthropic.Anthropic()
+    system = (HERE / "filter_prompt.md").read_text(encoding="utf-8")
+    batches = [posts[i:i + BATCH] for i in range(0, len(posts), BATCH)]
+    with ThreadPoolExecutor(4) as pool:
+        return [r for rs in pool.map(lambda b: screen(client, system, b), batches) for r in rs]
+
+
+def backfill(date_from, date_to, dry_run):
+    """Process a past date range (Beijing dates, inclusive), one issue per day. Leaves the watch state alone."""
+    start, end = day_start(date_from), day_start(date_to) + 86400
+    posts = sorted(fetch_since(start, end, max_pages=600), key=lambda p: p["ctime"])
+    days = {}
+    for p in posts:
+        days.setdefault(fmt_time(p["ctime"])[:10], []).append(p)
+    print(f"backfill {date_from} to {date_to}: {len(posts)} posts fetched")
+    for d, ps in sorted(days.items()):
+        print(f"  {d}: {len(ps)} posts ({fmt_time(ps[0]['ctime'])[11:]}–{fmt_time(ps[-1]['ctime'])[11:]})")
+    if posts and posts[0]["ctime"] > start + 3600:
+        print(f"WARNING: the feed only reached back to {fmt_time(posts[0]['ctime'])} Beijing")
+    if dry_run:
+        print("dry run: Claude not called, no issues opened")
+        return 0
+    by_id = {p["id"]: p for p in posts}
+    results = screen_all(posts)
+    groups = []
+    for d in sorted(days):
+        rs = [r for r in results if fmt_time(by_id[r["id"]]["ctime"])[:10] == d]
+        if rs:
+            groups.append((summary_title(rs, by_id, f"{d} Beijing"), rs, by_id))
+    print(f"{len(results)} relevant posts across {len(groups)} days")
+    return write_issues(groups)
+
+
 def main():
+    if os.environ.get("FROM_DATE"):
+        n = backfill(os.environ["FROM_DATE"], os.environ.get("TO_DATE") or os.environ["FROM_DATE"],
+                     os.environ.get("DRY_RUN", "").lower() == "true")
+    else:
+        n = watch()
+    if gh_out := os.environ.get("GITHUB_OUTPUT"):
+        open(gh_out, "a").write(f"has_matches={'true' if n else 'false'}\n")
+
+
+def watch():
     now = int(time.time())
     try:
         state = json.load(open(STATE_FILE, encoding="utf-8"))
@@ -141,27 +218,10 @@ def main():
 
     posts = fetch_since(since)
     new = sorted((p for p in posts if p["id"] not in seen), key=lambda p: p["ctime"])
-    results = []
-    if new:
-        client = anthropic.Anthropic()
-        system = (HERE / "filter_prompt.md").read_text(encoding="utf-8")
-        for i in range(0, len(new), BATCH):
-            results += screen(client, system, new[i:i + BATCH])
+    results = screen_all(new)
     print(f"window from {fmt_time(since)} Beijing: {len(posts)} posts, {len(new)} new, {len(results)} relevant")
-
-    for f in Path().glob("issue_body_*.md"):
-        f.unlink()
-    if results:
-        by_id = {p["id"]: p for p in new}
-        times = sorted(by_id[r["id"]]["ctime"] for r in results)
-        lo, hi = fmt_time(times[0]), fmt_time(times[-1])
-        n_high = sum(r["importance"] == "High" for r in results)
-        open("issue_title.txt", "w", encoding="utf-8").write(
-            f"CLS: {len(results)} AI/semis/supply-chain update{'s' if len(results) != 1 else ''}"
-            + (f", {n_high} high" if n_high else "")
-            + f" ({lo[5:]} – {hi[11:] if lo[:10] == hi[:10] else hi[5:]} Beijing)")
-        for n, body in enumerate(render(results, by_id), 1):
-            open(f"issue_body_{n}.md", "w", encoding="utf-8").write(body)
+    by_id = {p["id"]: p for p in new}
+    n = write_issues([(summary_title(results, by_id), results, by_id)] if results else [])
 
     for p in new:
         seen[p["id"]] = p["ctime"]
@@ -169,9 +229,7 @@ def main():
              "seen": {str(k): v for k, v in seen.items() if v >= now - SEEN_TTL}}
     os.makedirs(os.path.dirname(STATE_FILE) or ".", exist_ok=True)
     json.dump(state, open(STATE_FILE, "w", encoding="utf-8"))
-
-    if gh_out := os.environ.get("GITHUB_OUTPUT"):
-        open(gh_out, "a").write(f"has_matches={'true' if results else 'false'}\n")
+    return n
 
 
 if __name__ == "__main__":
