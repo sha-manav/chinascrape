@@ -2,7 +2,7 @@
 
 ## Automatic alerts (every 30 minutes)
 
-`.github/workflows/cls-watch.yml` runs `watch_cls.py` on GitHub Actions every 30 minutes. It pulls every CLS Telegraph post since the last run and sends them to Claude (`claude-opus-5-5`), which keeps the ones relevant to the AI trade and its supply chain (AI, semiconductors, photonics and optics, robotics, datacenter power and infrastructure, and upstream materials) and translates them into English. Each run with relevant posts opens one GitHub issue labelled `cls-alert` and assigned to the repo owner, so GitHub emails it. Runs with nothing relevant open nothing.
+`.github/workflows/cls-watch.yml` runs `watch_cls.py` on GitHub Actions every 30 minutes. It pulls every CLS Telegraph post since the last run and sends them to Claude Haiku 4.5 (`claude-haiku-4-5`, the cheapest Claude model, roughly $0.0007 per post or about $0.30 a day), which keeps the ones relevant to the AI trade and its supply chain (AI, semiconductors, photonics and optics, robotics, datacenter power and infrastructure, and upstream materials) and translates them into English. The email lists China news first, then US news, then other regions, each grouped by category. Each run with relevant posts opens one GitHub issue labelled `cls-alert` and assigned to the repo owner, so GitHub emails it. Runs with nothing relevant open nothing.
 
 - **Setup:** add an Anthropic API key as a repository secret named `ANTHROPIC_API_KEY` (Settings → Secrets and variables → Actions).
 - **What counts as relevant** is written in plain English in `filter_prompt.md`; edit it to widen or narrow the filter.

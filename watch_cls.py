@@ -21,7 +21,8 @@ MAX_PAGES = 30
 BATCH = 60                 # posts per Claude request
 BODY_LIMIT = 60000         # GitHub issue bodies max out at 65536 characters
 
-MODEL = "claude-opus-5-5"
+MODEL = "claude-haiku-4-5"   # cheapest Claude model; ~$1/$5 per million input/output tokens
+REGIONS = ["China", "US", "Other regions"]   # email order
 CATEGORIES = ["AI", "Semiconductors", "Photonics & Optics", "Robotics", "Power & Datacenter Infrastructure",
               "Materials & Supply Chain"]
 SCHEMA = {
@@ -30,13 +31,14 @@ SCHEMA = {
         "type": "object",
         "properties": {
             "id": {"type": "integer"},
+            "region": {"type": "string", "enum": REGIONS},
             "category": {"type": "string", "enum": CATEGORIES},
             "importance": {"type": "string", "enum": ["High", "Medium", "Low"]},
             "headline_en": {"type": "string"},
             "translation_en": {"type": "string"},
             "companies": {"type": "string"},
         },
-        "required": ["id", "category", "importance", "headline_en", "translation_en", "companies"],
+        "required": ["id", "region", "category", "importance", "headline_en", "translation_en", "companies"],
         "additionalProperties": False,
     }}},
     "required": ["posts"],
@@ -84,13 +86,11 @@ def screen(client, system, batch):
     """Ask Claude which posts in the batch are relevant; returns their English write-ups."""
     payload = [{"id": p["id"], "time": fmt_time(p["ctime"]), "title": (p.get("title") or "").strip(),
                 "content": (p.get("content") or p.get("brief") or "").strip()} for p in batch]
-    with client.beta.messages.stream(
+    with client.messages.stream(
         model=MODEL,
-        max_tokens=64000,
-        betas=["server-side-fallback-2026-07-01"],
-        fallbacks="default",
+        max_tokens=32000,
         system=system,
-        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": SCHEMA}},
+        output_config={"format": {"type": "json_schema", "schema": SCHEMA}},
         messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
     ) as stream:
         msg = stream.get_final_message()
@@ -102,19 +102,22 @@ def screen(client, system, batch):
 
 
 def render(results, posts):
-    """Issue bodies grouped by category, split to fit GitHub's size limit."""
+    """Issue bodies grouped by region (China first), then category, split to fit GitHub's size limit."""
     blocks = []
-    for cat in CATEGORIES:
-        items = sorted((r for r in results if r["category"] == cat), key=lambda r: posts[r["id"]]["ctime"], reverse=True)
-        if not items:
-            continue
-        blocks.append(f"## {cat} ({len(items)})\n")
-        for r in items:
-            p = posts[r["id"]]
-            link = p.get("shareurl") or f"https://www.cls.cn/detail/{p['id']}"
-            meta = " · ".join(x for x in (f"Importance: {r['importance']}", r["companies"].strip(), f"[Source]({link})") if x)
-            text = r["translation_en"].strip().replace("\n", "  \n")
-            blocks.append(f"**[{fmt_time(p['ctime'])[5:]} Beijing] {r['headline_en'].strip()}**  \n{text}  \n_{meta}_\n")
+    for region in REGIONS:
+        in_region = [r for r in results if r["region"] == region]
+        if in_region:
+            blocks.append(f"# {region} ({len(in_region)})\n")
+        for cat in CATEGORIES:
+            items = sorted((r for r in in_region if r["category"] == cat), key=lambda r: posts[r["id"]]["ctime"], reverse=True)
+            if items:
+                blocks.append(f"## {cat} ({len(items)})\n")
+            for r in items:
+                p = posts[r["id"]]
+                link = p.get("shareurl") or f"https://www.cls.cn/detail/{p['id']}"
+                meta = " · ".join(x for x in (f"Importance: {r['importance']}", r["companies"].strip(), f"[Source]({link})") if x)
+                text = r["translation_en"].strip().replace("\n", "  \n")
+                blocks.append(f"**[{fmt_time(p['ctime'])[5:]} Beijing] {r['headline_en'].strip()}**  \n{text}  \n_{meta}_\n")
     bodies, cur = [], ""
     for b in blocks:
         if cur and len(cur) + len(b) > BODY_LIMIT:

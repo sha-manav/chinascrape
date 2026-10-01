@@ -46,6 +46,11 @@ For long roundup posts (morning/evening briefs, 隔夜要闻, 新闻精选), kee
 ## How to write each item
 - `headline_en`: a concise English headline in the style of a newswire, keeping company names, tickers and numbers exact.
 - `translation_en`: a faithful English translation of the post (or of its relevant items, for roundups). Keep every number, unit, currency and date exactly as in the source; do not add facts or commentary. Use common English names for companies and give the Chinese name in brackets the first time for Chinese companies that are not well known in English, e.g. "Zhishang Technology (致尚科技, 301486.SZ)".
+- `region`: where the news is about.
+  - `China`: mainland China and Hong Kong. This covers Chinese companies (including their overseas listings and operations), Chinese government policy and data, and China-listed sector moves.
+  - `US`: US companies, US government policy (export controls, tariffs, CHIPS Act), US data and US market moves.
+  - `Other regions`: everywhere else, e.g. Taiwan, South Korea, Japan, Europe.
+  If a post involves more than one, pick the region of the main actor. For example, US export controls aimed at China are `US`, and China's response is `China`. A roundup post with relevant items from several regions goes under the region with the most relevant items.
 - `category`: the single best fit.
 - `importance`: High for market-moving items (major earnings/guidance, big orders or capex, export controls, major product launches, large M&A); Medium for clear sector news; Low for minor but still relevant items.
 - `companies`: comma-separated key companies or tickers, or an empty string.
