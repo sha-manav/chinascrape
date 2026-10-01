@@ -29,6 +29,8 @@ jobs:
         with:
           python-version: "3.12"
 
+      - run: pip install -q -r requirements.txt
+
       # The last-seen position lives in the Actions cache between runs.
       - name: Restore state
         uses: actions/cache/restore@v4
@@ -40,6 +42,7 @@ jobs:
       - name: Check feed
         id: watch
         env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           LOOKBACK_HOURS: ${{ inputs.lookback_hours }}
         run: python3 watch_cls.py
 
@@ -57,8 +60,9 @@ jobs:
           OWNER: ${{ github.repository_owner }}
         run: |
           gh label create cls-alert --color 1d76db --description "CLS Telegraph watch" 2>/dev/null || true
-          gh issue create \
-            --title "$(cat issue_title.txt)" \
-            --body-file issue_body.md \
-            --label cls-alert \
-            --assignee "$OWNER"
+          mapfile -t files < <(ls -v issue_body_*.md)
+          for i in "${!files[@]}"; do
+            title="$(cat issue_title.txt)"
+            [ ${#files[@]} -gt 1 ] && title="$title [part $((i+1))/${#files[@]}]"
+            gh issue create --title "$title" --body-file "${files[$i]}" --label cls-alert --assignee "$OWNER"
+          done

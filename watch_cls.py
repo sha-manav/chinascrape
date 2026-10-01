@@ -1,35 +1,46 @@
-"""Check the CLS Telegraph feed for new watchlist posts since the last run.
+"""Check the CLS Telegraph feed for new posts since the last run, have Claude pick out the
+ones relevant to the AI trade and its supply chain, and translate them into English.
 
 Run every 30 minutes by .github/workflows/cls-watch.yml. Writes issue_title.txt and
-issue_body.md when there are new matching posts, and keeps its place in STATE_FILE.
+issue_body_N.md when there are relevant posts, and keeps its place in STATE_FILE.
+The relevance rules and translation instructions are in filter_prompt.md.
 """
 import json, os, re, sys, time, urllib.request
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
+import anthropic
 from sign_url import url
 
 BJ = timezone(timedelta(hours=8))
+HERE = Path(__file__).parent
 STATE_FILE = os.environ.get("STATE_FILE", "state/cls_state.json")
 FIRST_RUN_LOOKBACK = int(os.environ.get("FIRST_RUN_LOOKBACK_MIN", "60")) * 60
 OVERLAP = 15 * 60          # re-read this much before the last run, in case posts land late
-SEEN_TTL = 2 * 24 * 3600   # how long to remember ids already reported
+SEEN_TTL = 2 * 24 * 3600   # how long to remember ids already handled
 MAX_PAGES = 30
+BATCH = 60                 # posts per Claude request
 BODY_LIMIT = 60000         # GitHub issue bodies max out at 65536 characters
 
-# Category -> keywords. ASCII keywords match as whole words, case-insensitively.
-KEYWORDS = {
-    "AI": ["人工智能", "AI", "大模型", "算力", "智算", "DeepSeek", "OpenAI", "英伟达", "NVIDIA", "寒武纪", "昇腾", "GPU"],
-    "CHIPS": ["芯片", "半导体", "集成电路", "晶圆", "存储芯片", "HBM", "先进封装", "国产替代", "台积电", "TSMC",
-              "中芯国际", "华虹", "海力士", "三星电子", "美光", "实体清单", "出口管制"],
-    "InP": ["磷化铟", "InP", "铟", "镓", "锗", "化合物半导体", "砷化镓", "衬底"],
-    "PHOTONICS": ["光模块", "光通信", "硅光", "光芯片", "CPO", "共封装光学", "激光器", "EML", "VCSEL", "800G", "1.6T",
-                  "光纤", "中际旭创", "旭创", "新易盛", "天孚通信", "光迅"],
-    "LITHO": ["光刻", "EUV", "DUV", "光刻胶", "ASML", "阿斯麦", "上海微电子", "光罩", "掩模", "掩膜"],
-}
-PATTERNS = {
-    cat: re.compile("|".join(
-        rf"(?<![A-Za-z0-9]){re.escape(k)}(?![A-Za-z0-9])" if k.isascii() else re.escape(k) for k in words),
-        re.IGNORECASE)
-    for cat, words in KEYWORDS.items()
+MODEL = "claude-opus-5-5"
+CATEGORIES = ["AI", "Semiconductors", "Photonics & Optics", "Robotics", "Power & Datacenter Infrastructure",
+              "Materials & Supply Chain"]
+SCHEMA = {
+    "type": "object",
+    "properties": {"posts": {"type": "array", "items": {
+        "type": "object",
+        "properties": {
+            "id": {"type": "integer"},
+            "category": {"type": "string", "enum": CATEGORIES},
+            "importance": {"type": "string", "enum": ["High", "Medium", "Low"]},
+            "headline_en": {"type": "string"},
+            "translation_en": {"type": "string"},
+            "companies": {"type": "string"},
+        },
+        "required": ["id", "category", "importance", "headline_en", "translation_en", "companies"],
+        "additionalProperties": False,
+    }}},
+    "required": ["posts"],
+    "additionalProperties": False,
 }
 
 
@@ -65,44 +76,52 @@ def fetch_since(since):
     return [p for p in posts.values() if p["ctime"] >= since]
 
 
-def categorize(post):
-    text = " ".join(str(post.get(k) or "") for k in ("title", "brief", "content"))
-    found = {}
-    for cat, pat in PATTERNS.items():
-        hits = sorted({m.group(0) for m in pat.finditer(text)}, key=str.lower)
-        if hits:
-            found[cat] = hits
-    return found
-
-
 def fmt_time(ct):
     return datetime.fromtimestamp(ct, BJ).strftime("%Y-%m-%d %H:%M")
 
 
-def render(matches):
-    by_cat = {cat: [] for cat in KEYWORDS}
-    for post, cats in matches:
-        by_cat[next(iter(cats))].append((post, cats))   # list each post once, under its first category
-    out = []
-    for cat, items in by_cat.items():
+def screen(client, system, batch):
+    """Ask Claude which posts in the batch are relevant; returns their English write-ups."""
+    payload = [{"id": p["id"], "time": fmt_time(p["ctime"]), "title": (p.get("title") or "").strip(),
+                "content": (p.get("content") or p.get("brief") or "").strip()} for p in batch]
+    with client.beta.messages.stream(
+        model=MODEL,
+        max_tokens=64000,
+        betas=["server-side-fallback-2026-07-01"],
+        fallbacks="default",
+        system=system,
+        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": SCHEMA}},
+        messages=[{"role": "user", "content": json.dumps(payload, ensure_ascii=False)}],
+    ) as stream:
+        msg = stream.get_final_message()
+    if msg.stop_reason != "end_turn":
+        raise RuntimeError(f"Claude stopped with {msg.stop_reason}: {msg.stop_details}")
+    text = next(b.text for b in msg.content if b.type == "text")
+    ids = {p["id"] for p in batch}
+    return [r for r in json.loads(text)["posts"] if r["id"] in ids]
+
+
+def render(results, posts):
+    """Issue bodies grouped by category, split to fit GitHub's size limit."""
+    blocks = []
+    for cat in CATEGORIES:
+        items = sorted((r for r in results if r["category"] == cat), key=lambda r: posts[r["id"]]["ctime"], reverse=True)
         if not items:
             continue
-        out.append(f"## {cat} ({len(items)})\n")
-        for post, cats in sorted(items, key=lambda x: x[0]["ctime"], reverse=True):
-            title = (post.get("title") or "").strip()
-            content = (post.get("content") or post.get("brief") or "").strip()
-            link = post.get("shareurl") or f"https://www.cls.cn/detail/{post['id']}"
-            tags = "; ".join(f"{c}: {', '.join(h)}" for c, h in cats.items())
-            if not title:
-                m = re.match(r"【(.+?)】", content)
-                title = m.group(1) if m else content[:40]
-            out.append(f"**[{fmt_time(post['ctime'])} Beijing] {title}**  ")
-            out.append(f"{content}  ")
-            out.append(f"_Matched: {tags}_ · [Link]({link})\n")
-    body = "\n".join(out)
-    if len(body) > BODY_LIMIT:
-        body = body[:BODY_LIMIT] + "\n\n…(truncated)"
-    return body
+        blocks.append(f"## {cat} ({len(items)})\n")
+        for r in items:
+            p = posts[r["id"]]
+            link = p.get("shareurl") or f"https://www.cls.cn/detail/{p['id']}"
+            meta = " · ".join(x for x in (f"Importance: {r['importance']}", r["companies"].strip(), f"[Source]({link})") if x)
+            text = r["translation_en"].strip().replace("\n", "  \n")
+            blocks.append(f"**[{fmt_time(p['ctime'])[5:]} Beijing] {r['headline_en'].strip()}**  \n{text}  \n_{meta}_\n")
+    bodies, cur = [], ""
+    for b in blocks:
+        if cur and len(cur) + len(b) > BODY_LIMIT:
+            bodies.append(cur)
+            cur = ""
+        cur += b + "\n"
+    return bodies + [cur] if cur else bodies
 
 
 def main():
@@ -119,14 +138,27 @@ def main():
 
     posts = fetch_since(since)
     new = sorted((p for p in posts if p["id"] not in seen), key=lambda p: p["ctime"])
-    matches = [(p, c) for p in new if (c := categorize(p))]
-    print(f"window from {fmt_time(since)} Beijing: {len(posts)} posts, {len(new)} new, {len(matches)} matching")
+    results = []
+    if new:
+        client = anthropic.Anthropic()
+        system = (HERE / "filter_prompt.md").read_text(encoding="utf-8")
+        for i in range(0, len(new), BATCH):
+            results += screen(client, system, new[i:i + BATCH])
+    print(f"window from {fmt_time(since)} Beijing: {len(posts)} posts, {len(new)} new, {len(results)} relevant")
 
-    if matches:
-        lo, hi = fmt_time(matches[0][0]["ctime"]), fmt_time(matches[-1][0]["ctime"])
+    for f in Path().glob("issue_body_*.md"):
+        f.unlink()
+    if results:
+        by_id = {p["id"]: p for p in new}
+        times = sorted(by_id[r["id"]]["ctime"] for r in results)
+        lo, hi = fmt_time(times[0]), fmt_time(times[-1])
+        n_high = sum(r["importance"] == "High" for r in results)
         open("issue_title.txt", "w", encoding="utf-8").write(
-            f"CLS Telegraph: {len(matches)} new post{'s' if len(matches) != 1 else ''} ({lo} – {hi[11:] if lo[:10] == hi[:10] else hi} Beijing)")
-        open("issue_body.md", "w", encoding="utf-8").write(render(matches))
+            f"CLS: {len(results)} AI/semis/supply-chain update{'s' if len(results) != 1 else ''}"
+            + (f", {n_high} high" if n_high else "")
+            + f" ({lo[5:]} – {hi[11:] if lo[:10] == hi[:10] else hi[5:]} Beijing)")
+        for n, body in enumerate(render(results, by_id), 1):
+            open(f"issue_body_{n}.md", "w", encoding="utf-8").write(body)
 
     for p in new:
         seen[p["id"]] = p["ctime"]
@@ -136,7 +168,7 @@ def main():
     json.dump(state, open(STATE_FILE, "w", encoding="utf-8"))
 
     if gh_out := os.environ.get("GITHUB_OUTPUT"):
-        open(gh_out, "a").write(f"has_matches={'true' if matches else 'false'}\n")
+        open(gh_out, "a").write(f"has_matches={'true' if results else 'false'}\n")
 
 
 if __name__ == "__main__":
