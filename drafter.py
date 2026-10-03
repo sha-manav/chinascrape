@@ -170,8 +170,9 @@ def tick(state, client):
 
 def loop(minutes):
     if not (xapi.configured() and os.environ.get("DRAFTS_PASSPHRASE")):
-        sys.exit("X drafts not configured: set the X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET "
-                 "and DRAFTS_PASSPHRASE repository secrets")
+        print("X drafts not configured yet: set the X_API_KEY, X_API_SECRET, X_ACCESS_TOKEN, X_ACCESS_TOKEN_SECRET "
+              "and DRAFTS_PASSPHRASE repository secrets. Exiting without error.")
+        return
     client = anthropic.Anthropic()
     state = load_state()
     deadline, failures, last_publish = time.time() + minutes * 60, 0, 0
