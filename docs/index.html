@@ -1,0 +1,258 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Reply Drafts</title>
+<style>
+:root {
+  --bg: #f6f7f9; --card: #ffffff; --ink: #14171a; --muted: #5b6672; --line: #e3e7ec;
+  --accent: #1d6fe0; --accent-ink: #ffffff; --soft: #eef4fd; --warn: #9a5b00; --warn-bg: #fff4e0;
+  --good: #137a3f; --ctx: #f2f4f7; --done: .45;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f1216; --card: #171b21; --ink: #e8ecf1; --muted: #9aa5b1; --line: #2a313a;
+    --accent: #4c9bff; --accent-ink: #0b0e12; --soft: #1a2636; --warn: #f0b252; --warn-bg: #2b2213;
+    --good: #4cc27f; --ctx: #1e242c;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f1216; --card: #171b21; --ink: #e8ecf1; --muted: #9aa5b1; --line: #2a313a;
+  --accent: #4c9bff; --accent-ink: #0b0e12; --soft: #1a2636; --warn: #f0b252; --warn-bg: #2b2213;
+  --good: #4cc27f; --ctx: #1e242c;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; }
+.wrap { max-width: 760px; margin: 0 auto; padding: 16px; }
+header { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font-size: 20px; margin: 4px 0; }
+.status { color: var(--muted); font-size: 13px; }
+.banner { background: var(--warn-bg); color: var(--warn); border-radius: 10px; padding: 10px 12px; margin: 10px 0; font-size: 14px; }
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; align-items: center; }
+.toolbar input[type=search] { flex: 1 1 180px; min-width: 0; }
+input, textarea, button, select { font: inherit; color: var(--ink); }
+input[type=search], input[type=password], select { background: var(--card); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; }
+label.chk { display: inline-flex; gap: 6px; align-items: center; font-size: 14px; color: var(--muted); }
+button { cursor: pointer; border: 1px solid var(--line); background: var(--card); border-radius: 8px; padding: 6px 12px; }
+button.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); font-weight: 600; }
+button:disabled { opacity: .5; cursor: default; }
+.card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 14px; margin: 12px 0; }
+.card.done { opacity: var(--done); }
+.card.fresh { box-shadow: 0 0 0 2px var(--accent) inset; }
+.who { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.who b { font-size: 15px; }
+.who a { color: var(--muted); text-decoration: none; }
+.meta { color: var(--muted); font-size: 13px; }
+.worth { margin-left: auto; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 99px; background: var(--soft); color: var(--accent); }
+.text { white-space: pre-wrap; overflow-wrap: anywhere; margin: 8px 0; }
+.ctx { background: var(--ctx); border-radius: 8px; padding: 8px 10px; font-size: 14px; margin: 6px 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+.ctx .meta { display: block; margin-bottom: 2px; }
+.draft { border-top: 1px dashed var(--line); padding-top: 10px; margin-top: 10px; }
+.draft .angle { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+.draft textarea { width: 100%; min-height: 76px; resize: vertical; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--bg); margin: 4px 0; }
+.row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.count { font-size: 12px; color: var(--muted); margin-right: auto; }
+.count.over { color: #d23b3b; font-weight: 700; }
+.skip { color: var(--muted); font-size: 14px; font-style: italic; margin-top: 8px; }
+a { color: var(--accent); }
+.gate { max-width: 420px; margin: 12vh auto; background: var(--card); border: 1px solid var(--line); border-radius: 14px; padding: 22px; }
+.gate input { width: 100%; margin: 10px 0; }
+.empty { color: var(--muted); text-align: center; padding: 40px 0; }
+</style>
+</head>
+<body>
+<div id="gate" class="gate" hidden>
+  <h1>Reply drafts</h1>
+  <p class="status">Enter your passphrase (the <code>DRAFTS_PASSPHRASE</code> secret). It never leaves this browser; the feed is decrypted here.</p>
+  <form id="gateForm">
+    <input id="pass" type="password" autocomplete="current-password" placeholder="Passphrase" required>
+    <label class="chk"><input id="remember" type="checkbox" checked> Remember on this device</label>
+    <div class="row" style="margin-top:12px"><button class="primary" type="submit">Unlock</button><span id="gateMsg" class="status"></span></div>
+  </form>
+</div>
+
+<div id="app" class="wrap" hidden>
+  <header>
+    <h1>Reply drafts</h1>
+    <span id="status" class="status"></span>
+  </header>
+  <div id="banner" class="banner" hidden></div>
+  <div class="toolbar">
+    <input id="q" type="search" placeholder="Filter by account or text">
+    <select id="minWorth" aria-label="Minimum worth">
+      <option value="1">All posts</option><option value="3">Worth 3+</option><option value="4">Worth 4+</option><option value="5">Worth 5</option>
+    </select>
+    <label class="chk"><input id="showDone" type="checkbox"> Show done</label>
+    <label class="chk"><input id="showSkipped" type="checkbox"> Show skipped</label>
+    <button id="lock" type="button">Lock</button>
+  </div>
+  <div id="list"></div>
+</div>
+
+<script>
+"use strict";
+const params = new URLSearchParams(location.search);
+const OWNER = params.get("owner") || location.hostname.split(".")[0];
+const REPO = params.get("repo") || location.pathname.split("/").filter(Boolean)[0] || "chinascrape";
+const FEED_URL = params.get("feed") || `https://api.github.com/repos/${OWNER}/${REPO}/contents/feed.enc.json?ref=x-data`;
+const REFRESH_MS = 90 * 1000;
+const $ = (id) => document.getElementById(id);
+const store = {
+  get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : JSON.parse(v); } catch { return d; } },
+  set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} },
+  del(k) { try { localStorage.removeItem(k); } catch {} },
+};
+let passphrase = store.get("rd.pass", null);
+let feed = null, seenIds = new Set(store.get("rd.seen", [])), firstLoad = true;
+const done = new Set(store.get("rd.done", []));
+const edits = store.get("rd.edits", {});
+
+// ---- crypto (matches vault.py: PBKDF2-SHA256 -> AES-256-GCM) ----
+const b64 = (s) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+async function decrypt(box, pass) {
+  const base = await crypto.subtle.importKey("raw", new TextEncoder().encode(pass), "PBKDF2", false, ["deriveKey"]);
+  const key = await crypto.subtle.deriveKey({ name: "PBKDF2", hash: "SHA-256", salt: b64(box.salt), iterations: box.rounds },
+                                            base, { name: "AES-GCM", length: 256 }, false, ["decrypt"]);
+  const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: b64(box.iv) }, key, b64(box.ct));
+  return JSON.parse(new TextDecoder().decode(plain));
+}
+
+// ---- X's weighted length: most Latin text counts 1, CJK/emoji 2, links 23 ----
+function xLength(s) {
+  let n = 0;
+  s = s.replace(/https?:\/\/\S+/g, () => { n += 23; return ""; });
+  for (const ch of s) {
+    const c = ch.codePointAt(0);
+    n += (c <= 4351 || (c >= 8192 && c <= 8205) || (c >= 8208 && c <= 8223) || (c >= 8242 && c <= 8247)) ? 1 : 2;
+  }
+  return n;
+}
+function ago(t) {
+  const s = Math.max(0, Date.now() / 1000 - t);
+  if (s < 90) return "just now";
+  if (s < 3600) return `${Math.round(s / 60)}m ago`;
+  if (s < 86400) return `${Math.round(s / 3600)}h ago`;
+  return `${Math.round(s / 86400)}d ago`;
+}
+function el(tag, props = {}, ...kids) {
+  const e = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") e.className = v; else if (k === "text") e.textContent = v; else if (k.startsWith("on")) e.addEventListener(k.slice(2), v); else e.setAttribute(k, v);
+  }
+  for (const k of kids) if (k) e.append(k);
+  return e;
+}
+
+// ---- data ----
+async function load() {
+  const r = await fetch(FEED_URL, { headers: { Accept: "application/vnd.github.raw+json" }, cache: "no-store" });
+  if (r.status === 404) throw new Error("No feed yet: the drafter hasn't published (check the X reply drafter workflow).");
+  if (!r.ok) throw new Error(`Could not load the feed (HTTP ${r.status}${r.status === 403 ? ", GitHub rate limit; it resets within an hour" : ""}).`);
+  return decrypt(await r.json(), passphrase);
+}
+async function refresh() {
+  try {
+    feed = await load();
+    render();
+  } catch (e) {
+    if (e.name === "OperationError") { lock("Wrong passphrase."); return; }
+    showBanner(e.message);
+  }
+}
+function showBanner(msg) { const b = $("banner"); b.hidden = !msg; b.textContent = msg || ""; }
+
+// ---- view ----
+function render() {
+  const st = feed.status || {};
+  $("status").textContent = `@${feed.me} · updated ${ago(feed.updated)} · today ${st.posts_today ?? 0}/${st.post_cap ?? "?"} posts read, ${st.drafts_today ?? 0} drafted`;
+  const stale = Date.now() / 1000 - feed.updated > 20 * 60;
+  showBanner(st.error || (stale ? `The drafter hasn't published for ${ago(feed.updated).replace(" ago", "")}; check the X reply drafter workflow in GitHub Actions.` : ""));
+  const q = $("q").value.trim().toLowerCase(), minWorth = +$("minWorth").value;
+  const showDone = $("showDone").checked, showSkipped = $("showSkipped").checked;
+  const items = feed.items.filter((it) => {
+    const d = it.draft || {};
+    if (!showDone && done.has(it.id)) return false;
+    if (!showSkipped && d.skip) return false;
+    if ((d.worth || 1) < minWorth) return false;
+    return !q || `${it.author} ${it.author_name} ${it.text}`.toLowerCase().includes(q);
+  });
+  const list = $("list");
+  // keep the textarea being edited from being replaced mid-typing
+  const active = document.activeElement && document.activeElement.dataset && document.activeElement.dataset.key;
+  list.replaceChildren(...(items.length ? items.map(card) : [el("p", { class: "empty", text: "Nothing to reply to right now." })]));
+  if (active) { const t = list.querySelector(`[data-key="${active}"]`); if (t) { t.focus(); t.setSelectionRange(t.value.length, t.value.length); } }
+  feed.items.forEach((it) => seenIds.add(it.id));
+  store.set("rd.seen", [...seenIds].slice(-3000));
+  firstLoad = false;
+}
+function card(it) {
+  const d = it.draft || {};
+  const fresh = !firstLoad && !seenIds.has(it.id);
+  const c = el("article", { class: `card${done.has(it.id) ? " done" : ""}${fresh ? " fresh" : ""}` });
+  c.append(el("div", { class: "who" },
+    el("b", { text: it.author_name || it.author }),
+    el("a", { href: `https://x.com/${it.author}`, target: "_blank", rel: "noopener", text: `@${it.author}` }),
+    el("span", { class: "meta", text: `${(it.author_followers || 0).toLocaleString()} followers · ` }),
+    el("a", { class: "meta", href: it.url, target: "_blank", rel: "noopener", text: ago(it.ts) }),
+    d.worth ? el("span", { class: "worth", title: "How much a reply would add", text: `worth ${d.worth}/5` }) : null));
+  c.append(el("div", { class: "text", text: it.text }));
+  for (const x of it.context || []) {
+    c.append(el("div", { class: "ctx" }, el("span", { class: "meta", text: `${x.type === "quoted" ? "Quoting" : "Replying to"} @${x.author}` }), x.text));
+  }
+  if (d.skip) {
+    c.append(el("div", { class: "skip", text: `No draft: ${d.skip_reason || "skipped"}.` }));
+  }
+  (d.replies || []).forEach((r, i) => c.append(draftBox(it, r, i)));
+  c.append(el("div", { class: "row", style: "margin-top:10px" },
+    el("button", { type: "button", text: done.has(it.id) ? "Mark not done" : "Mark done", onclick: () => { toggleDone(it.id); render(); } })));
+  return c;
+}
+function draftBox(it, r, i) {
+  const key = `${it.id}:${i}`;
+  const ta = el("textarea", { "data-key": key, "aria-label": `Draft ${i + 1}` });
+  ta.value = edits[key] ?? r.text;
+  const count = el("span", { class: "count" });
+  const upd = () => { const n = xLength(ta.value); count.textContent = `${n}/280`; count.classList.toggle("over", n > 280); };
+  ta.addEventListener("input", () => { if (ta.value === r.text) delete edits[key]; else edits[key] = ta.value; store.set("rd.edits", edits); upd(); });
+  upd();
+  const reply = () => {
+    const url = `https://x.com/intent/post?in_reply_to=${encodeURIComponent(it.id)}&text=${encodeURIComponent(ta.value)}`;
+    window.open(url, "_blank", "noopener");
+    if (!done.has(it.id)) toggleDone(it.id);
+    ta.closest(".card").classList.add("done");   // greys out now; hidden at the next refresh
+  };
+  const copy = async (ev) => { try { await navigator.clipboard.writeText(ta.value); ev.target.textContent = "Copied"; setTimeout(() => (ev.target.textContent = "Copy"), 1200); } catch {} };
+  return el("div", { class: "draft" },
+    el("div", { class: "angle", text: r.angle || `Option ${i + 1}` }), ta,
+    el("div", { class: "row" }, count,
+      el("button", { type: "button", text: "Copy", onclick: copy }),
+      el("button", { type: "button", class: "primary", text: "Reply on X", onclick: reply })));
+}
+function toggleDone(id) { done.has(id) ? done.delete(id) : done.add(id); store.set("rd.done", [...done].slice(-3000)); }
+
+// ---- unlock / lock ----
+function lock(msg) {
+  passphrase = null; store.del("rd.pass");
+  $("app").hidden = true; $("gate").hidden = false; $("gateMsg").textContent = msg || ""; $("pass").focus();
+}
+$("gateForm").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  passphrase = $("pass").value; $("gateMsg").textContent = "Unlocking…";
+  try {
+    feed = await load();
+    if ($("remember").checked) store.set("rd.pass", passphrase);
+    $("gate").hidden = true; $("app").hidden = false; $("pass").value = ""; render();
+  } catch (err) {
+    $("gateMsg").textContent = err.name === "OperationError" ? "Wrong passphrase." : err.message;
+  }
+});
+$("lock").addEventListener("click", () => lock());
+for (const id of ["q", "minWorth", "showDone", "showSkipped"]) $(id).addEventListener("input", () => feed && render());
+setInterval(() => { if (passphrase && !document.hidden) refresh(); }, REFRESH_MS);
+document.addEventListener("visibilitychange", () => { if (!document.hidden && passphrase) refresh(); });
+if (passphrase) { $("app").hidden = false; refresh(); } else { $("gate").hidden = false; }
+</script>
+</body>
+</html>

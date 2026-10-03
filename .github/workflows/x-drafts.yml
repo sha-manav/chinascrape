@@ -1,0 +1,57 @@
+name: X reply drafter
+
+# Reads new posts from the accounts you follow every 2 minutes and drafts replies (docs/ page).
+# Like the news watcher, each run stays alive ~5h40m and then starts its own next run, because
+# GitHub drops many scheduled runs; the hourly schedule is only a backup.
+on:
+  schedule:
+    - cron: "41 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write   # push the encrypted feed to the x-data branch
+  actions: write    # start the next run
+
+concurrency:
+  group: x-drafts
+  cancel-in-progress: false
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -q -r requirements.txt
+
+      - name: Restore state
+        uses: actions/cache/restore@v4
+        with:
+          path: state
+          key: x-state-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: x-state-
+
+      - name: Draft replies
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          X_API_KEY: ${{ secrets.X_API_KEY }}
+          X_API_SECRET: ${{ secrets.X_API_SECRET }}
+          X_ACCESS_TOKEN: ${{ secrets.X_ACCESS_TOKEN }}
+          X_ACCESS_TOKEN_SECRET: ${{ secrets.X_ACCESS_TOKEN_SECRET }}
+          DRAFTS_PASSPHRASE: ${{ secrets.DRAFTS_PASSPHRASE }}
+          X_MAX_POSTS_PER_DAY: ${{ vars.X_MAX_POSTS_PER_DAY }}
+          X_MAX_DRAFTS_PER_DAY: ${{ vars.X_MAX_DRAFTS_PER_DAY }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 drafter.py
+
+      - name: Save state
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: state
+          key: x-state-${{ github.run_id }}-${{ github.run_attempt }}

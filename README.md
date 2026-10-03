@@ -13,6 +13,7 @@
 | Exchange filings | Shanghai/Shenzhen/Beijing filings (via EastMoney, PDFs read, incl. investor-meeting records 投资者关系活动记录表), HKEXnews (PDFs read) |
 | US filings | SEC EDGAR 8-K, 6-K, 10-Q, 10-K, 20-F, S-1/F-1, 13D, and Form 4 insider trades (parsed: who, buy/sell, shares, price, 10b5-1) |
 | Government | MOFCOM, MIIT, China Customs (English), US Federal Register (BIS export controls, USTR, ITA, OFAC) |
+| X | Posts from the accounts you follow, read by the reply drafter below (so each post is paid for once) |
 | Video and calls | ~27 YouTube channels (business TV, chip companies, AI/semis podcasts; title and description only), Motley Fool earnings-call transcripts |
 
 Not covered: Yicai (its API returns nothing to GitHub's servers; the other flash feeds carry the same stories), SGX (blocks GitHub's servers), YouTube transcripts (YouTube blocks transcript downloads from GitHub's servers), Xueqiu user posts (only its live news feed).
@@ -25,6 +26,22 @@ Not covered: Yicai (its API returns nothing to GitHub's servers; the other flash
 - **Past dates (CLS only):** fill in `from_date` / `to_date` (Beijing dates, YYYY-MM-DD) to process a past range, one issue per day; tick `dry_run` first to see, at no cost, how far back the feed reaches.
 - Positions and recently sent headlines are kept in the Actions cache. If a check fails, the same items are retried at the next check, and GitHub emails about the failed run when it ends.
 - GitHub disables schedules after 60 days without repo activity; re-enable it from the Actions tab if that happens.
+
+## X reply drafter (every 2 minutes)
+
+`drafter.py`, run by `.github/workflows/x-drafts.yml`, reads new posts from everyone you follow on X every 2 minutes and has Claude Sonnet 5.5 draft two reply options for each (different angles: an insight, a sharp question, a counterpoint), in your voice, learned from your last ~50 posts. Drafts appear on the page in `docs/` with an edit box, X's character count, and a **Reply on X** button that opens X's composer pre-filled. Nothing is ever posted automatically; you post yourself. Posts where a reply would be inappropriate (condolences, giveaways, pure promotion) get no draft, and each post gets a 1-5 "worth replying" score to sort by. Reply rules are in `prompts/reply.md`.
+
+The same posts feed the 30-minute news email, so scoops from niche accounts you follow show up there too.
+
+**Privacy:** this repo and its GitHub Pages site are public, so the feed is encrypted (AES-256-GCM, key from your passphrase) before it is pushed to the `x-data` branch, and the page decrypts it in your browser. Without the passphrase the published data is unreadable.
+
+**Cost:** X charges about $0.005 per post read (pay-per-use, no subscription; buy credits and set a spending limit in the X developer console). Drafts cost roughly $0.005-0.01 each with Sonnet. Daily caps stop polling and drafting once reached: repository variables `X_MAX_POSTS_PER_DAY` (default 1500, about $7.50 of X reads) and `X_MAX_DRAFTS_PER_DAY` (default 1500).
+
+**Setup:**
+1. At console.x.com, create a project and app, buy some credits, and set a spending limit. In the app's "Keys and tokens", copy the API Key and Secret, then generate an Access Token and Secret for your own account (Read permission is enough).
+2. Add repository secrets `X_API_KEY`, `X_API_SECRET`, `X_ACCESS_TOKEN`, `X_ACCESS_TOKEN_SECRET`, and `DRAFTS_PASSPHRASE` (a long passphrase you choose; you type it on the page).
+3. Settings → Pages: deploy from branch `claude/clone-xfeeds-repo-7wmqml`, folder `/docs`. The page is then at `https://<owner>.github.io/chinascrape/`.
+4. Actions → X reply drafter → Run workflow. Like the news watcher, it keeps itself running in ~5h40m runs.
 
 ## Manual tools
 
