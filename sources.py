@@ -6,14 +6,16 @@
 `details(item)` fetches the full text (article, PDF, SEC document, transcript) for items that
 pass triage. Sources without timestamps report the time they were first seen.
 """
-import gzip, html, io, json, re, time, urllib.parse, urllib.request, http.cookiejar
+import gzip, html, io, json, os, re, time, urllib.parse, urllib.request, http.cookiejar
 import xml.etree.ElementTree as ET
 from datetime import datetime, timezone, timedelta
 from sign_url import url as cls_url
 
 BJ = timezone(timedelta(hours=8))
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-SEC_UA = "chinascrape research bot chinascrape-bot@users.noreply.github.com"   # SEC requires a name + email
+# SEC asks for a contact name and email in the User-Agent; set SEC_USER_AGENT (repo variable) to your own
+SEC_UA = os.environ.get("SEC_USER_AGENT") or "chinascrape research chinascrape@users.noreply.github.com"
+SEC_HEADERS = {"User-Agent": SEC_UA, "Accept-Encoding": "identity", "Host": "www.sec.gov"}
 DETAIL_CHARS = 9000   # max characters of full text sent to Claude per item
 
 
@@ -40,7 +42,8 @@ def http_get(url, headers=None, data=None, opener=None, timeout=25):
 
 
 def get_json(url, **kw):
-    return json.loads(http_get(url, **kw))
+    d = json.loads(http_get(url, **kw))
+    return json.loads(d) if isinstance(d, str) else d   # some APIs double-encode
 
 
 def strip_html(s):
@@ -83,9 +86,9 @@ def pdf_text(data):
 
 # ---------- news flashes (timestamped) ----------
 
-def cls(since):
-    out, cursor = {}, int(time.time())
-    for _ in range(30):
+def cls(since, until=None, max_pages=30):
+    out, cursor = {}, until or int(time.time())
+    for _ in range(max_pages):
         rows = get_json(cls_url(cursor, 50), headers={"Referer": "https://www.cls.cn/telegraph"})["data"]["roll_data"]
         for r in rows:
             out[r["id"]] = item("CLS", r["id"], "News", r["ctime"], r.get("title") or "", r.get("content") or r.get("brief") or "",
@@ -95,7 +98,7 @@ def cls(since):
             break
         cursor = oldest
         time.sleep(1)
-    return list(out.values())
+    return [i for i in out.values() if until is None or i["ctime"] < until]
 
 
 def eastmoney_flash(since):
@@ -124,6 +127,7 @@ def sina_flash(since):
 
 def yicai_flash(since):
     rows = get_json("https://www.yicai.com/api/ajax/getbrieflist?page=1&pagesize=60", headers={"Referer": "https://www.yicai.com/brief/"})
+    rows = rows if isinstance(rows, list) else rows.get("data") or rows.get("list") or []
     return [item("Yicai", r["id"], "News", bj_ts(r["CreateDate"][:19], "%Y-%m-%dT%H:%M:%S"), r.get("LiveTitle", ""), r.get("LiveContent", ""),
                  "https://www.yicai.com" + r.get("url", ""), {"full": r.get("LiveContent", "")}) for r in rows]
 
@@ -215,7 +219,7 @@ def sec_filings(since):
     for form in SEC_FORMS:
         for start in range(0, 400, 100):
             feed = http_get(f"https://www.sec.gov/cgi-bin/browse-edgar?action=getcurrent&type={urllib.parse.quote(form)}"
-                            f"&company=&dateb=&owner=include&start={start}&count=100&output=atom", headers={"User-Agent": SEC_UA})
+                            f"&company=&dateb=&owner=include&start={start}&count=100&output=atom", headers=SEC_HEADERS)
             entries = ET.fromstring(feed).findall("{http://www.w3.org/2005/Atom}entry")
             oldest = None
             for e in entries:
@@ -256,22 +260,22 @@ def federal_register(since):
     out = []
     for agency in ["industry-and-security-bureau", "trade-representative-office-of-united-states", "international-trade-administration",
                    "foreign-assets-control-office"]:
-        d = get_json(f"https://www.federalregister.gov/api/v1/documents.json?conditions%5Bagencies%5D%5B%5D={agency}&order=newest&per_page=20")
+        fields = "".join(f"&fields%5B%5D={f}" for f in ("title", "type", "abstract", "document_number", "html_url", "publication_date", "raw_text_url"))
+        d = get_json(f"https://www.federalregister.gov/api/v1/documents.json?conditions%5Bagencies%5D%5B%5D={agency}&order=newest&per_page=20{fields}")
         for r in d.get("results", []):
             ts = int(datetime.strptime(r["publication_date"], "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
             out.append(item("US Federal Register", r["document_number"], "Policy", max(ts, since), r["title"],
-                            f"{r['type']}. {r.get('abstract') or ''}", r["html_url"], {"page": r["html_url"]}))
+                            f"{r['type']}. {r.get('abstract') or ''}", r["html_url"], {"text_url": r.get("raw_text_url") or r["html_url"]}))
     return out
 
 
 # ---------- video and transcripts ----------
 
 YOUTUBE_CHANNELS = [  # handles; channel ids are looked up once and cached
-    "@CNBC", "@CNBCtelevision", "@markets", "@BloombergTechnology", "@YahooFinance", "@FoxBusiness", "@WSJNews",
-    "@NVIDIA", "@AMD", "@intel", "@MicronTechnology", "@BroadcomInc", "@Qualcomm", "@arm", "@ASML", "@AppliedMaterials",
+    "@CNBC", "@CNBCtelevision", "@markets", "@YahooFinance", "@FoxBusiness", "@WSJNews",
+    "@NVIDIA", "@AMD", "@intel", "@MicronTechnology", "@Qualcomm", "@arm", "@ASML",
     "@DwarkeshPatel", "@Bg2Pod", "@AcquiredFM", "@a16z", "@NoPriorsPodcast", "@LexFridman", "@20VC", "@AllInPodcast",
-    "@Asianometry", "@TechTechPotato", "@ServeTheHomeVideo", "@MorganStanley", "@GoldmanSachs", "@SemiconductorEngineering",
-    "@CGTNOfficial", "@SCMPNews", "@NikkeiAsia", "@caixinglobal1069",
+    "@Asianometry", "@TechTechPotato", "@ServeTheHomeVideo", "@MorganStanley", "@GoldmanSachs", "@NikkeiAsia",
 ]
 
 
@@ -281,6 +285,7 @@ def youtube(since, cache):
     for handle in YOUTUBE_CHANNELS:
         try:
             if handle not in ids:
+                ids[handle] = None
                 page = http_get(f"https://www.youtube.com/{handle}", headers={"Accept-Language": "en-US,en;q=0.9"}).decode("utf-8", "replace")
                 m = re.search(r'"(?:externalId|channelId)":"(UC[\w-]{22})"', page)
                 ids[handle] = m.group(1) if m else None
@@ -328,13 +333,13 @@ SEC_KEYWORDS = re.compile(r"China|Chinese|PRC|Taiwan|Hong Kong|export control|En
 
 
 def sec_document(index_url, form):
-    idx = http_get(index_url, headers={"User-Agent": SEC_UA}).decode("utf-8", "replace")
+    idx = http_get(index_url, headers=SEC_HEADERS).decode("utf-8", "replace")
     docs = re.findall(r'href="(/Archives/edgar/data/[^"]+\.(?:htm|html|xml|txt))"', idx)
     if form == "4":
         xml_doc = next((d for d in docs if d.endswith(".xml")), None)
         if not xml_doc:
             return ""
-        root = ET.fromstring(http_get("https://www.sec.gov" + xml_doc, headers={"User-Agent": SEC_UA}))
+        root = ET.fromstring(http_get("https://www.sec.gov" + xml_doc, headers=SEC_HEADERS))
         owner = root.findtext(".//reportingOwner/reportingOwnerId/rptOwnerName", "")
         title = root.findtext(".//reportingOwnerRelationship/officerTitle", "") or ("Director" if root.findtext(".//isDirector") in ("1", "true") else "")
         lines = [f"Insider: {owner} ({title}) at {root.findtext('.//issuer/issuerName', '')} ({root.findtext('.//issuer/issuerTradingSymbol', '')})"]
@@ -355,13 +360,24 @@ def sec_document(index_url, form):
     main = next((d for d in docs if not d.endswith((".xml", ".txt")) and "index" not in d), None)
     if not main:
         return ""
-    text = strip_html(http_get("https://www.sec.gov" + main, headers={"User-Agent": SEC_UA}).decode("utf-8", "replace"))
+    text = strip_html(http_get("https://www.sec.gov" + main, headers=SEC_HEADERS).decode("utf-8", "replace"))
     if len(text) <= DETAIL_CHARS:
         return text
     # long reports: keep the opening plus paragraphs about China, export controls and suppliers
     paras = [p for p in text.split("\n") if len(p) > 80]
     picked = [p for p in paras if SEC_KEYWORDS.search(p)]
     return (text[:2500] + "\n...\n" + "\n".join(picked))[:DETAIL_CHARS * 2]
+
+
+def article_text(raw):
+    """Main text of an article page: its paragraphs, skipping navigation and boilerplate."""
+    paras = [strip_html(p) for p in re.findall(r"(?is)<p[^>]*>(.*?)</p>", raw)]
+    paras = [p for p in paras if len(p) >= 25]
+    text = "\n".join(paras)
+    if len(text) < 200:   # pages without <p> markup (some ministry pages): fall back to the whole page
+        m = re.search(r'(?is)<div[^>]+(?:TRS_Editor|article|content)[^>]*>(.*)', raw)
+        text = strip_html(m.group(1) if m else raw)
+    return text
 
 
 def details(it):
@@ -373,11 +389,10 @@ def details(it):
             return pdf_text(http_get(d["pdf"], timeout=40))[:DETAIL_CHARS]
         if "sec_index" in d:
             return sec_document(d["sec_index"], d.get("form", ""))[:DETAIL_CHARS * 2]
+        if "text_url" in d:
+            return strip_html(http_get(d["text_url"]).decode("utf-8", "replace"))[:DETAIL_CHARS]
         if "page" in d:
-            raw = http_get(d["page"]).decode("utf-8", "replace")
-            m = re.search(r"(?is)<article.*?</article>", raw) or re.search(r'(?is)<div[^>]+(?:content|article|main|TRS_Editor)[^>]*>.*', raw)
-            text = strip_html(m.group(0) if m else raw)
-            return text[:DETAIL_CHARS * (3 if d.get("long") else 1)]
+            return article_text(http_get(d["page"]).decode("utf-8", "replace"))[:DETAIL_CHARS * (3 if d.get("long") else 1)]
     except Exception as e:
         return f"(full text unavailable: {e!r})"
     return ""

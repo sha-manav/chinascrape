@@ -2,13 +2,28 @@
 
 ## Automatic alerts (every 30 minutes)
 
-`.github/workflows/cls-watch.yml` runs `watch_cls.py` on GitHub Actions every 30 minutes. GitHub drops many scheduled runs, so each scheduled run stays alive for about 5h40m and does the 30-minute checks itself; when it finishes it starts its own next run, with the hourly schedule as a backup. To (re)start it by hand: Actions → CLS Telegraph watch → Run workflow with `watch_loop` ticked. It pulls every CLS Telegraph post since the last run and sends them to Claude Haiku 4.5 (`claude-haiku-4-5`, the cheapest Claude model, roughly $0.0007 per post or about $0.30 a day), which keeps the ones relevant to the AI trade and its supply chain (AI, semiconductors, photonics and optics, robotics, datacenter power and infrastructure, and upstream materials) and translates them into English. The email lists China news first, then US news, then other regions, each grouped by category. Each run with relevant posts opens one GitHub issue labelled `cls-alert` and assigned to the repo owner, so GitHub emails it. Runs with nothing relevant open nothing.
+`watch.py`, run by `.github/workflows/cls-watch.yml`, checks every source below every 30 minutes and emails what matters for the AI trade and its supply chain (AI, semiconductors, photonics and optics, robotics, datacenter power and infrastructure, upstream materials), translated into English. Each check with relevant news opens one GitHub issue labelled `cls-alert` and assigned to the repo owner, so GitHub emails it: China first, then US, then other regions, each grouped by category, with the source and item type (News, Filing, Insider, Transcript, Video, Policy) on every entry.
 
-- **Setup:** add an Anthropic API key as a repository secret named `ANTHROPIC_API_KEY` (Settings → Secrets and variables → Actions).
-- **What counts as relevant** is written in plain English in `filter_prompt.md`; edit it to widen or narrow the filter.
-- The last-seen position is kept in the Actions cache. If it is lost, the next run looks back 60 minutes. If Claude or CLS fails, the run fails (GitHub emails you) and the same posts are retried next run.
-- Run it by hand from the Actions tab ("CLS Telegraph watch" → Run workflow). To test, enter a number in "lookback_hours" (e.g. 24) to process every post from that many hours back, even ones already sent. Very long digests are split into several issues.
-- **Past dates:** fill in `from_date` / `to_date` (Beijing dates, YYYY-MM-DD) when running by hand to process a past range, with one issue per day. Tick `dry_run` first to see, at no cost, how far back the CLS feed actually reaches. Backfills don't affect the 30-minute watch.
+**Sources** (`sources.py`; run `python3 sources.py --details` or the "Source probe" workflow for a health check):
+
+| Kind | Sources |
+|---|---|
+| News flashes | CLS Telegraph, EastMoney 7x24, Tonghuashun 7x24, Xueqiu live news, Wallstreetcn, Sina 7x24, Yicai, 36Kr |
+| Long-form news | Caixin, Caixin Global, Caijing |
+| Exchange filings | Shanghai/Shenzhen/Beijing filings (via EastMoney, PDFs read, incl. investor-meeting records 投资者关系活动记录表), HKEXnews (PDFs read) |
+| US filings | SEC EDGAR 8-K, 6-K, 10-Q, 10-K, 20-F, S-1/F-1, 13D, and Form 4 insider trades (parsed: who, buy/sell, shares, price, 10b5-1) |
+| Government | MOFCOM, MIIT, China Customs (English), US Federal Register (BIS export controls, USTR, ITA, OFAC) |
+| Video and calls | ~27 YouTube channels (business TV, chip companies, AI/semis podcasts; title and description only), Motley Fool earnings-call transcripts |
+
+Not covered: SGX (blocks GitHub's servers), YouTube transcripts (YouTube blocks transcript downloads from GitHub's servers), Xueqiu user posts (only its live news feed).
+
+**How it works:** each check pulls everything new from every source; Claude Haiku 4.5 first reads only the titles (`prompts/triage.md`) and picks what is relevant, dropping duplicates of the same story across sources and of stories already sent in the last 12 hours; the picks' full text is fetched (articles, PDFs, SEC documents, transcripts) and Claude writes the English entries (`prompts/write.md`). The relevance rules shared by both steps are in `prompts/relevance.md`, in plain English; edit them to widen or narrow the filter. A source that fails is skipped for that check and listed at the bottom of the email.
+
+- **Setup:** repository secret `ANTHROPIC_API_KEY`. Optional repository variable `SEC_USER_AGENT` (your name and email, which the SEC asks for), e.g. `Jane Doe jane@example.com`.
+- **Keeping it running:** GitHub drops many scheduled runs, so each run stays alive for about 5h40m, checks every 30 minutes, then starts its own next run, with an hourly schedule as a backup. To (re)start it by hand: Actions → CLS Telegraph watch → Run workflow with `watch_loop` ticked.
+- **Testing:** run the workflow with `lookback_hours` (e.g. 2) to process everything from the last N hours across all sources, even if already sent.
+- **Past dates (CLS only):** fill in `from_date` / `to_date` (Beijing dates, YYYY-MM-DD) to process a past range, one issue per day; tick `dry_run` first to see, at no cost, how far back the feed reaches.
+- Positions and recently sent headlines are kept in the Actions cache. If a check fails, the same items are retried at the next check, and GitHub emails about the failed run when it ends.
 - GitHub disables schedules after 60 days without repo activity; re-enable it from the Actions tab if that happens.
 
 ## Manual tools

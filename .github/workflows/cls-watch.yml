@@ -63,13 +63,14 @@ jobs:
         id: watch
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
           GITHUB_TOKEN: ${{ github.token }}
           LOOP_MINUTES: ${{ (github.event_name == 'schedule' || inputs.watch_loop) && '340' || '' }}
           LOOKBACK_HOURS: ${{ inputs.lookback_hours }}
           FROM_DATE: ${{ inputs.from_date }}
           TO_DATE: ${{ inputs.to_date }}
           DRY_RUN: ${{ inputs.dry_run }}
-        run: python3 watch_cls.py
+        run: python3 watch.py
 
       - name: Save state
         if: always()
