@@ -1,5 +1,6 @@
 name: Source probe
 
+# Health check: fetches every source once and prints counts, samples and one full-text extract each.
 on:
   workflow_dispatch:
 
@@ -9,11 +10,11 @@ permissions:
 jobs:
   probe:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install -q youtube-transcript-api
-      - run: python3 probe_sources.py
+      - run: pip install -q -r requirements.txt
+      - run: python3 sources.py --details
