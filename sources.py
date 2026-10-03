@@ -344,29 +344,6 @@ def earnings_calls(since):
     return out
 
 
-# ---------- X (from the reply drafter's feed, so posts are only paid for once) ----------
-
-def x_following(since):
-    """Posts from the X accounts you follow, read from the drafter's encrypted feed on the x-data branch."""
-    passphrase, repo = os.environ.get("DRAFTS_PASSPHRASE"), os.environ.get("GITHUB_REPOSITORY")
-    if not (passphrase and repo):
-        return []   # drafter not set up
-    import vault
-    try:
-        box = get_json(f"https://api.github.com/repos/{repo}/contents/feed.enc.json?ref=x-data",
-                       headers={"Accept": "application/vnd.github.raw+json"})
-    except urllib.error.HTTPError as e:
-        if e.code == 404:
-            return []   # drafter hasn't published yet
-        raise
-    out = []
-    for p in vault.open_(box, passphrase)["items"]:
-        ctx = " ".join(f"[{c['type']} @{c['author']}: {c['text']}]" for c in p.get("context", []))
-        out.append(item("X", p["id"], "News", p["ts"], f"@{p['author']}: {p['text'][:140]}", f"{p['text']} {ctx}".strip(),
-                        p["url"], {"full": f"{p['author_name']} (@{p['author']}, {p['author_followers']:,} followers): {p['text']}\n{ctx}"}))
-    return out
-
-
 # ---------- registry ----------
 
 SOURCES = {   # name -> (fetcher, timestamped?)
@@ -375,7 +352,7 @@ SOURCES = {   # name -> (fetcher, timestamped?)
     "Caixin": (caixin, False), "Caixin Global": (caixin_global, False), "Caijing": (caijing, False),
     "SSE/SZSE filings": (a_share_filings, True), "HKEX filings": (hkex_filings, True), "SEC EDGAR": (sec_filings, True),
     "China ministries": (gov_cn, False), "US Federal Register": (federal_register, False),
-    "YouTube": (youtube, True), "Earnings calls": (earnings_calls, False), "X": (x_following, True),
+    "YouTube": (youtube, True), "Earnings calls": (earnings_calls, False),
 }
 
 

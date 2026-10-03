@@ -64,7 +64,6 @@ jobs:
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
           SEC_USER_AGENT: ${{ vars.SEC_USER_AGENT }}
-          DRAFTS_PASSPHRASE: ${{ secrets.DRAFTS_PASSPHRASE }}
           GITHUB_TOKEN: ${{ github.token }}
           LOOP_MINUTES: ${{ (github.event_name == 'schedule' || inputs.watch_loop) && '340' || '' }}
           LOOKBACK_HOURS: ${{ inputs.lookback_hours }}

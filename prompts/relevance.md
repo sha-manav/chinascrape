@@ -50,5 +50,4 @@ Keep an item if it is substantively about any of the following, in China or anyw
 - Investor-meeting records (投资者关系活动记录表), earnings-call transcripts, conference talks and interviews with executives, where they discuss demand, pricing, capacity, customers, China, export controls or suppliers
 - US filings (8-K, 10-Q, 10-K, 20-F, 6-K) that discuss China exposure, export controls, Entity List, tariffs, Taiwan risk, or supplier/manufacturing bases
 - Government actions: export controls, Entity List additions, tariffs, anti-dumping, rare-earth or critical-mineral controls, chip subsidies and industrial plans (MOFCOM, MIIT, NDRC, Customs, US BIS/USTR/Treasury)
-- Posts on X from the accounts the reader follows when they carry real news or a non-obvious, specific insight on these themes (scoops, channel checks, supply-chain data, order or pricing details, policy leaks), not opinions, jokes or engagement bait
 - YouTube videos of executive interviews, keynotes, earnings discussions or expert analysis on these themes (not general market chatter)
