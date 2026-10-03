@@ -14,7 +14,7 @@ from sign_url import url as cls_url
 BJ = timezone(timedelta(hours=8))
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 # SEC asks for a contact name and email in the User-Agent; set SEC_USER_AGENT (repo variable) to your own
-SEC_UA = os.environ.get("SEC_USER_AGENT") or "chinascrape research chinascrape@users.noreply.github.com"
+SEC_UA = os.environ.get("SEC_USER_AGENT") or "chinascrape research desk sec-contact@chinascrape.dev"
 SEC_HEADERS = {"User-Agent": SEC_UA, "Accept-Encoding": "identity", "Host": "www.sec.gov"}
 DETAIL_CHARS = 9000   # max characters of full text sent to Claude per item
 
@@ -126,8 +126,11 @@ def sina_flash(since):
 
 
 def yicai_flash(since):
-    rows = get_json("https://www.yicai.com/api/ajax/getbrieflist?page=1&pagesize=60", headers={"Referer": "https://www.yicai.com/brief/"})
-    rows = rows if isinstance(rows, list) else rows.get("data") or rows.get("list") or []
+    rows = get_json("https://www.yicai.com/api/ajax/getbrieflist?page=1&pagesize=60",
+                    headers={"Referer": "https://www.yicai.com/brief/", "Accept-Encoding": "identity", "X-Requested-With": "XMLHttpRequest"})
+    if isinstance(rows, dict):
+        rows = next((v for v in rows.values() if isinstance(v, list)), [])
+    rows = [r for r in rows if isinstance(r, dict)]
     return [item("Yicai", r["id"], "News", bj_ts(r["CreateDate"][:19], "%Y-%m-%dT%H:%M:%S"), r.get("LiveTitle", ""), r.get("LiveContent", ""),
                  "https://www.yicai.com" + r.get("url", ""), {"full": r.get("LiveContent", "")}) for r in rows]
 
@@ -369,15 +372,38 @@ def sec_document(index_url, form):
     return (text[:2500] + "\n...\n" + "\n".join(picked))[:DETAIL_CHARS * 2]
 
 
+def _long_strings(node, out):
+    if isinstance(node, str):
+        if len(node) > 300:
+            out.append(node)
+    elif isinstance(node, dict):
+        for v in node.values():
+            _long_strings(v, out)
+    elif isinstance(node, list):
+        for v in node:
+            _long_strings(v, out)
+
+
 def article_text(raw):
-    """Main text of an article page: its paragraphs, skipping navigation and boilerplate."""
+    """Main text of an article page: its paragraphs, else text embedded in the page's JSON (sites that
+    render with JavaScript), else the meta description. Skips navigation and boilerplate."""
     paras = [strip_html(p) for p in re.findall(r"(?is)<p[^>]*>(.*?)</p>", raw)]
-    paras = [p for p in paras if len(p) >= 25]
-    text = "\n".join(paras)
-    if len(text) < 200:   # pages without <p> markup (some ministry pages): fall back to the whole page
-        m = re.search(r'(?is)<div[^>]+(?:TRS_Editor|article|content)[^>]*>(.*)', raw)
-        text = strip_html(m.group(1) if m else raw)
-    return text
+    text = "\n".join(p for p in paras if len(p) >= 25)
+    if len(text) >= 400:
+        return text
+    blobs = []
+    for js in re.findall(r'(?is)<script[^>]*type="application/(?:json|ld\+json)"[^>]*>(.*?)</script>', raw):
+        try:
+            _long_strings(json.loads(js), blobs)
+        except ValueError:
+            pass
+    if blobs:
+        return "\n".join(strip_html(b) for b in sorted(blobs, key=len, reverse=True)[:3])
+    m = re.search(r'(?is)<div[^>]+(?:TRS_Editor|article-content|article_content|content)[^>]*>(.*?)</div>', raw)
+    if m and len(strip_html(m.group(1))) >= 200:
+        return strip_html(m.group(1))
+    desc = re.search(r'(?is)<meta[^>]+(?:name|property)="(?:og:)?description"[^>]+content="([^"]*)"', raw)
+    return (text + "\n" + html.unescape(desc.group(1)) if desc else text).strip()
 
 
 def details(it):
@@ -411,7 +437,8 @@ if __name__ == "__main__":   # health check: python3 sources.py
             for i in sorted(items, key=lambda i: -i["ctime"])[:2]:
                 print(f"       {datetime.fromtimestamp(i['ctime'], BJ):%m-%d %H:%M} | {i['title'][:70]} | {i['text'][:60]!r} | {i['url'][:80]}")
             if items and "--details" in sys.argv:
-                print("       DETAIL:", details(items[0])[:300].replace("\n", " "))
+                d = details(sorted(items, key=lambda i: -i["ctime"])[0])
+                print(f"       DETAIL ({len(d)} chars):", d[:300].replace("\n", " "))
         except Exception as e:
             print(f"FAIL {name:20s} {e!r}"[:300])
         sys.stdout.flush()
