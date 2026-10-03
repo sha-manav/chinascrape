@@ -339,7 +339,7 @@ def sec_document(index_url, form):
     idx = http_get(index_url, headers=SEC_HEADERS).decode("utf-8", "replace")
     docs = re.findall(r'href="(/Archives/edgar/data/[^"]+\.(?:htm|html|xml|txt))"', idx)
     if form == "4":
-        xml_doc = next((d for d in docs if d.endswith(".xml")), None)
+        xml_doc = next((d for d in docs if d.endswith(".xml") and "/xsl" not in d), None)   # raw XML, not the rendered page
         if not xml_doc:
             return ""
         root = ET.fromstring(http_get("https://www.sec.gov" + xml_doc, headers=SEC_HEADERS))
@@ -418,7 +418,11 @@ def details(it):
         if "text_url" in d:
             return strip_html(http_get(d["text_url"]).decode("utf-8", "replace"))[:DETAIL_CHARS]
         if "page" in d:
-            return article_text(http_get(d["page"]).decode("utf-8", "replace"))[:DETAIL_CHARS * (3 if d.get("long") else 1)]
+            text = article_text(http_get(d["page"]).decode("utf-8", "replace"))
+            anchor = text.find(it["title"][:12]) if len(it["title"]) >= 12 else -1
+            if anchor > 0:   # drop site navigation before the article's own headline
+                text = text[anchor:]
+            return text[:DETAIL_CHARS * (3 if d.get("long") else 1)]
     except Exception as e:
         return f"(full text unavailable: {e!r})"
     return ""
