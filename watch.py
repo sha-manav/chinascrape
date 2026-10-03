@@ -18,6 +18,7 @@ STATE_FILE = os.environ.get("STATE_FILE", "state/watch_state.json")
 FIRST_RUN_LOOKBACK = int(os.environ.get("FIRST_RUN_LOOKBACK_MIN", "60")) * 60
 OVERLAP = 15 * 60           # re-read this much before a source's last item, in case items land late
 SEEN_TTL = 4 * 24 * 3600    # how long to remember items already handled
+MAX_AGE = 3 * 24 * 3600     # undated sources: ignore links to items older than this (homepages keep old stories)
 RECENT_TTL = 12 * 3600      # headlines already sent, shown to triage to avoid repeats
 INTERVAL = 30 * 60          # seconds between checks in loop mode
 TRIAGE_BATCH = 150          # items per triage request
@@ -28,6 +29,8 @@ MODEL = "claude-haiku-4-5"  # cheapest Claude model; ~$1/$5 per million input/ou
 REGIONS = ["China", "US", "Other regions"]   # email order
 CATEGORIES = ["AI", "Semiconductors", "Photonics & Optics", "Robotics", "Power & Datacenter Infrastructure",
               "Materials & Supply Chain"]
+DEDUPE_SCHEMA = {"type": "object", "properties": {"drop": {"type": "array", "items": {"type": "integer"}}},
+                 "required": ["drop"], "additionalProperties": False}
 TRIAGE_SCHEMA = {"type": "object", "properties": {"keep": {"type": "array", "items": {"type": "integer"}}},
                  "required": ["keep"], "additionalProperties": False}
 WRITE_SCHEMA = {
@@ -53,6 +56,11 @@ WRITE_SCHEMA = {
 
 def fmt_time(ct):
     return datetime.fromtimestamp(ct, BJ).strftime("%Y-%m-%d %H:%M")
+
+
+def when(it):
+    t = fmt_time(it["ctime"])[5:]
+    return t[:5] if it.get("day_only") else f"{t} Beijing"
 
 
 def ask(client, prompt_file, content, schema, max_tokens):
@@ -100,12 +108,16 @@ def write(client, items):
     with ThreadPoolExecutor(4) as pool:
         outs = list(pool.map(lambda b: ask(client, "write.md", json.dumps(b, ensure_ascii=False), WRITE_SCHEMA, 32000), batches))
     results = [(items[r["id"]], r) for out in outs for r in out["posts"] if 0 <= r["id"] < len(items)]
-    seen, unique = set(), []
-    for it, r in results:   # same item id twice across batches can't happen, but guard against repeated headlines
-        if r["headline_en"].strip().lower() not in seen:
-            seen.add(r["headline_en"].strip().lower())
-            unique.append((it, r))
-    return unique
+    return dedupe(client, results)
+
+
+def dedupe(client, results):
+    """Stage 3: one cheap pass over the final headlines to drop the same story reported by several sources."""
+    if len(results) < 2:
+        return results
+    lines = "\n".join(f"{n} | {it['source']} | {it['type']} | {r['headline_en']}" for n, (it, r) in enumerate(results))
+    drop = set(ask(client, "dedupe.md", lines, DEDUPE_SCHEMA, 2000)["drop"])
+    return [x for n, x in enumerate(results) if n not in drop]
 
 
 def render(results, footer=""):
@@ -124,7 +136,7 @@ def render(results, footer=""):
                 meta = " · ".join(x for x in (f"{it['type']} · {it['source']}", f"Importance: {r['importance']}",
                                               r["companies"].strip(), f"[Source]({it['url']})") if x)
                 text = r["translation_en"].strip().replace("\n", "  \n")
-                blocks.append(f"**[{fmt_time(it['ctime'])[5:]} Beijing] {r['headline_en'].strip()}**  \n{text}  \n_{meta}_\n")
+                blocks.append(f"**[{when(it)}] {r['headline_en'].strip()}**  \n{text}  \n_{meta}_\n")
     if footer:
         blocks.append(f"---\n_{footer}_\n")
     bodies, cur = [], ""
@@ -183,8 +195,10 @@ def collect(state, lookback=None):
         since = now - lookback if lookback else (pos[name] - OVERLAP if name in pos else now - FIRST_RUN_LOOKBACK)
         t = time.time()
         items = fn(since, cache) if fn is sources.youtube else fn(since)
+        if not timestamped:
+            items = [i for i in items if i["ctime"] >= now - MAX_AGE]
         if lookback:
-            fresh = [i for i in items if i["ctime"] >= since]
+            fresh = [i for i in items if i["ctime"] >= since or (not timestamped and i["day_only"])]
         elif not timestamped and name not in pos:
             fresh = []   # first run of an undated source: remember what is there now, report only later additions
         else:

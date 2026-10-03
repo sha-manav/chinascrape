@@ -58,9 +58,9 @@ Keep an item if it is substantively about any of the following, in China or anyw
 
 For long roundup posts (morning/evening briefs, 隔夜要闻, 新闻精选), keep the post if at least one item is relevant, and translate only the relevant items.
 
-Long documents (filings, PDFs, transcripts, SEC reports, government notices) come with an extract in `full_text`. For these, `translation_en` is a faithful English summary of what matters for the themes, at most about 150 words, in short sentences or `- ` bullet lines: the key numbers, orders, guidance, customers, capacity, China/export-control/supplier remarks, and quotes from executives where useful. Never invent numbers; if the extract is missing or unreadable, summarise only what the title and snippet say and say that the document text was unavailable.
+Long documents (filings, PDFs, SEC reports, government notices) come with an extract in `full_text`. For these, `translation_en` is a faithful English summary of what matters for the themes, at most about 150 words (up to 300 words for earnings-call transcripts and investor-meeting records, covering demand, pricing, guidance, capacity, customers, China and export controls, and supply-chain remarks), in short sentences or `- ` bullet lines: the key numbers, orders, guidance, customers, capacity, China/export-control/supplier remarks, and quotes from executives where useful. Never invent numbers; if the extract is missing or unreadable, summarise only what the title and snippet say and say that the document text was unavailable.
 
-For insider trades (type Insider), state who traded (name and role), buy or sell, number of shares, price, approximate dollar value, holdings after, and whether it was under a 10b5-1 plan. Importance is High only for large sales or purchases by the CEO, CFO or founders.
+For insider trades (type Insider), keep only open-market sales and purchases (transaction code S or P); drop filings that only report tax withholding (F), grants or awards (A), option exercises (M) or gifts (G). State who traded (name and role), buy or sell, number of shares, price, approximate dollar value, holdings after, and whether it was under a 10b5-1 plan. Importance is High only for large sales or purchases by the CEO, CFO or founders.
 
 For YouTube videos, summarise from the title and description and say that it is a video.
 

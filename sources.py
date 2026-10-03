@@ -57,9 +57,38 @@ def bj_ts(s, fmt):
     return int(datetime.strptime(s, fmt).replace(tzinfo=BJ).timestamp())
 
 
-def item(source, id_, type_, ctime, title, text="", url="", detail=None):
-    return {"key": f"{source}:{id_}", "source": source, "type": type_, "ctime": int(ctime),
+def item(source, id_, type_, ctime, title, text="", url="", detail=None, day_only=False):
+    return {"key": f"{source}:{id_}", "source": source, "type": type_, "ctime": int(ctime), "day_only": day_only,
             "title": (title or "").strip(), "text": (text or "").strip()[:600], "url": url, "detail": detail}
+
+
+def url_date(url):
+    """Publication date embedded in an article URL (…/2026-10-03/…, …/20261003/…, …/2026/10/03/…), else None."""
+    m = re.search(r"/(20\d\d)-?(\d\d)-?(\d\d)/", url) or re.search(r"/(20\d\d)/(\d\d)/(\d\d)/", url)
+    if m:
+        try:
+            return int(datetime(*map(int, m.groups()), tzinfo=BJ).timestamp())
+        except ValueError:
+            return None
+    return None
+
+
+def dated(source, id_, type_, title, url, detail, text=""):
+    """Item for an undated listing: dated from its URL when possible, else first-seen time."""
+    d = url_date(url)
+    return item(source, id_, type_, d or time.time(), title, text, url, detail, day_only=bool(d))
+
+
+def first_list(d):
+    """First list of objects anywhere in a JSON response."""
+    if isinstance(d, list):
+        return [x for x in d if isinstance(x, dict)]
+    if isinstance(d, dict):
+        for v in d.values():
+            found = first_list(v)
+            if found:
+                return found
+    return []
 
 
 def page_links(url, pattern, base=None, enc="utf-8", **kw):
@@ -128,9 +157,9 @@ def sina_flash(since):
 def yicai_flash(since):
     rows = get_json("https://www.yicai.com/api/ajax/getbrieflist?page=1&pagesize=60",
                     headers={"Referer": "https://www.yicai.com/brief/", "Accept-Encoding": "identity", "X-Requested-With": "XMLHttpRequest"})
-    if isinstance(rows, dict):
-        rows = next((v for v in rows.values() if isinstance(v, list)), [])
-    rows = [r for r in rows if isinstance(r, dict)]
+    rows = first_list(rows)
+    if not rows:
+        raise RuntimeError("Yicai returned no items")
     return [item("Yicai", r["id"], "News", bj_ts(r["CreateDate"][:19], "%Y-%m-%dT%H:%M:%S"), r.get("LiveTitle", ""), r.get("LiveContent", ""),
                  "https://www.yicai.com" + r.get("url", ""), {"full": r.get("LiveContent", "")}) for r in rows]
 
@@ -161,17 +190,17 @@ def xueqiu_flash(since):
 # ---------- long-form news (first-seen) ----------
 
 def caixin(since):
-    return [item("Caixin", re.search(r"/(\d+)\.html", h).group(1), "News", time.time(), t, "", h, {"page": h})
+    return [dated("Caixin", re.search(r"/(\d+)\.html", h).group(1), "News", t, h, {"page": h})
             for h, t in page_links("https://www.caixin.com/", r"caixin\.com/20\d\d-\d\d-\d\d/\d+\.html") if "photos." not in h]
 
 
 def caixin_global(since):
-    return [item("Caixin Global", re.search(r"(\d+)\.html", h).group(1), "News", time.time(), t, "", h, {"page": h})
+    return [dated("Caixin Global", re.search(r"(\d+)\.html", h).group(1), "News", t, h, {"page": h})
             for h, t in page_links("https://www.caixinglobal.com/news/", r"caixinglobal\.com/20\d\d-\d\d-\d\d/.*\d+\.html")]
 
 
 def caijing(since):
-    return [item("Caijing", re.search(r"/(\d+)\.shtml", h).group(1), "News", time.time(), t, "", h, {"page": h})
+    return [dated("Caijing", re.search(r"/(\d+)\.shtml", h).group(1), "News", t, h, {"page": h})
             for h, t in page_links("https://www.caijing.com.cn/", r"caijing\.com\.cn/20\d{6}/\d+\.shtml")]
 
 
@@ -253,7 +282,7 @@ def gov_cn(since):
                            ("China Customs", "http://english.customs.gov.cn/", r"/Statics/[\w-]+\.html|/news/.*\.html")]:
         try:
             for h, t in page_links(url, pat):
-                out.append(item(name, re.sub(r"\W", "", h[-40:]), "Policy", time.time(), t, "", h, {"page": h}))
+                out.append(dated(name, re.sub(r"\W", "", h[-40:]), "Policy", t, h, {"page": h}))
         except Exception as e:
             print(f"  {name}: {e!r}")
     return out
@@ -267,8 +296,8 @@ def federal_register(since):
         d = get_json(f"https://www.federalregister.gov/api/v1/documents.json?conditions%5Bagencies%5D%5B%5D={agency}&order=newest&per_page=20{fields}")
         for r in d.get("results", []):
             ts = int(datetime.strptime(r["publication_date"], "%Y-%m-%d").replace(tzinfo=timezone.utc).timestamp())
-            out.append(item("US Federal Register", r["document_number"], "Policy", max(ts, since), r["title"],
-                            f"{r['type']}. {r.get('abstract') or ''}", r["html_url"], {"text_url": r.get("raw_text_url") or r["html_url"]}))
+            out.append(item("US Federal Register", r["document_number"], "Policy", ts, r["title"],
+                            f"{r['type']}. {r.get('abstract') or ''}", r["html_url"], {"text_url": r.get("raw_text_url") or r["html_url"]}, day_only=True))
     return out
 
 
@@ -311,9 +340,7 @@ def youtube(since, cache):
 def earnings_calls(since):
     out = []
     for h, t in page_links("https://www.fool.com/earnings-call-transcripts/", r"/earnings/call-transcripts/20\d\d/\d\d/\d\d/"):
-        y, mth, d = re.search(r"/(20\d\d)/(\d\d)/(\d\d)/", h).groups()
-        ts = max(int(datetime(int(y), int(mth), int(d), tzinfo=timezone.utc).timestamp()), since)
-        out.append(item("Earnings call", h.rstrip("/").split("/")[-1], "Transcript", ts, t[:200], "", h, {"page": h, "long": True}))
+        out.append(dated("Earnings call", h.rstrip("/").split("/")[-1], "Transcript", t[:200], h, {"page": h, "long": True}))
     return out
 
 
