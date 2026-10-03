@@ -8,14 +8,14 @@
 
 | Kind | Sources |
 |---|---|
-| News flashes | CLS Telegraph, EastMoney 7x24, Tonghuashun 7x24, Xueqiu live news, Wallstreetcn, Sina 7x24, Yicai, 36Kr |
+| News flashes | CLS Telegraph, EastMoney 7x24, Tonghuashun 7x24, Xueqiu live news, Wallstreetcn, Sina 7x24, 36Kr |
 | Long-form news | Caixin, Caixin Global, Caijing |
 | Exchange filings | Shanghai/Shenzhen/Beijing filings (via EastMoney, PDFs read, incl. investor-meeting records 投资者关系活动记录表), HKEXnews (PDFs read) |
 | US filings | SEC EDGAR 8-K, 6-K, 10-Q, 10-K, 20-F, S-1/F-1, 13D, and Form 4 insider trades (parsed: who, buy/sell, shares, price, 10b5-1) |
 | Government | MOFCOM, MIIT, China Customs (English), US Federal Register (BIS export controls, USTR, ITA, OFAC) |
 | Video and calls | ~27 YouTube channels (business TV, chip companies, AI/semis podcasts; title and description only), Motley Fool earnings-call transcripts |
 
-Not covered: SGX (blocks GitHub's servers), YouTube transcripts (YouTube blocks transcript downloads from GitHub's servers), Xueqiu user posts (only its live news feed).
+Not covered: Yicai (its API returns nothing to GitHub's servers; the other flash feeds carry the same stories), SGX (blocks GitHub's servers), YouTube transcripts (YouTube blocks transcript downloads from GitHub's servers), Xueqiu user posts (only its live news feed).
 
 **How it works:** each check pulls everything new from every source; Claude Haiku 4.5 first reads only the titles (`prompts/triage.md`) and picks what is relevant, dropping duplicates of the same story across sources and of stories already sent in the last 12 hours; the picks' full text is fetched (articles, PDFs, SEC documents, transcripts) and Claude writes the English entries (`prompts/write.md`). The relevance rules shared by both steps are in `prompts/relevance.md`, in plain English; edit them to widen or narrow the filter. A source that fails is skipped for that check and listed at the bottom of the email.
 

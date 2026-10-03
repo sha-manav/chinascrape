@@ -348,7 +348,7 @@ def earnings_calls(since):
 
 SOURCES = {   # name -> (fetcher, timestamped?)
     "CLS": (cls, True), "EastMoney": (eastmoney_flash, True), "Tonghuashun": (ths_flash, True), "Wallstreetcn": (wallstreetcn, True),
-    "Sina": (sina_flash, True), "Yicai": (yicai_flash, True), "36Kr": (kr36_flash, True), "Xueqiu": (xueqiu_flash, True),
+    "Sina": (sina_flash, True), "36Kr": (kr36_flash, True), "Xueqiu": (xueqiu_flash, True),
     "Caixin": (caixin, False), "Caixin Global": (caixin_global, False), "Caijing": (caijing, False),
     "SSE/SZSE filings": (a_share_filings, True), "HKEX filings": (hkex_filings, True), "SEC EDGAR": (sec_filings, True),
     "China ministries": (gov_cn, False), "US Federal Register": (federal_register, False),
